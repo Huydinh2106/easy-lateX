@@ -1,0 +1,33 @@
+\documentclass[11pt]{article}
+
+\usepackage[T1]{fontenc}
+\usepackage{amsmath}
+
+\title{Browser-Based LaTeX Editing Prototype}
+\author{Prototype User}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+This document verifies that code-server, LaTeX Workshop, TeX Live, and
+\texttt{latexmk} can provide a useful LaTeX workflow entirely in a browser.
+\end{abstract}
+
+\section{A Small Demonstration}
+
+LaTeX is a document preparation system designed for high-quality technical
+typesetting~\cite{lamport1994latex}. A familiar equation is
+
+\begin{equation}
+  E = mc^2.
+\end{equation}
+
+The bibliography below is produced from \texttt{references.bib}.
+
+\bibliographystyle{plain}
+\bibliography{references}
+
+\end{document}
