@@ -1,5 +1,6 @@
 from functools import lru_cache
 
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy import URL
 from sqlalchemy.engine import make_url
@@ -17,6 +18,10 @@ class Settings(BaseSettings):
     database_url: str | None = None
 
     cors_origins: str = "http://localhost:3000"
+
+    firebase_project_id: str = ""
+    firebase_credentials_json: SecretStr | None = None
+    firebase_credentials_path: str = ""
 
     workspace_image: str = "latex-workspace:local"
     workspace_volume_prefix: str = "easy-latex-project"

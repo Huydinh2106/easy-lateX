@@ -9,3 +9,7 @@ frontend/*.tsbuildinfo
 backend/.pytest_cache/
 backend/**/__pycache__/
 backend/**/*.pyc
+
+# Local credentials are mounted read-only into the backend container.
+.secrets/*
+!.secrets/.gitkeep

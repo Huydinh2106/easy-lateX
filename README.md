@@ -1,25 +1,28 @@
 # Easy LaTeX platform MVP
 
 Easy LaTeX is a local-development platform for creating, listing, opening, and
-deleting isolated browser-based LaTeX projects. A Next.js dashboard owns the
-user flow, FastAPI owns project and workspace lifecycle, PostgreSQL stores
-metadata, and a reusable code-server image supplies Git, TeX Live, `latexmk`,
-LaTeX Workshop, and PDF preview.
+deleting isolated browser-based LaTeX projects. A Next.js dashboard and
+Firebase Authentication own the sign-in flow, FastAPI verifies Firebase ID
+tokens and owns project/workspace lifecycle, PostgreSQL stores users and
+project ownership, and a reusable code-server image supplies Git, TeX Live,
+`latexmk`, LaTeX Workshop, and PDF preview.
 
-This milestone intentionally has one local user. It does not include platform
-authentication, sharing, collaboration, version-history UI, background jobs,
+This milestone adds multi-user identity and private project ownership as the
+foundation for future sharing and collaboration. It does not yet include
+sharing, roles, real-time collaboration, version-history UI, background jobs,
 AI features, billing, Kubernetes, or production orchestration.
 
 ## Architecture
 
 ```text
 Browser
+  |-- Firebase Auth <------------------------> Email/password + Google
   |-- http://localhost:3000 ----------------> Next.js dashboard
   |                                               |
-  |                                         REST API
+  |                                    Firebase ID token
   |                                               v
   |-- http://localhost:8000 ----------------> FastAPI
-                                                  |-- PostgreSQL (metadata)
+                                                  |-- PostgreSQL (users + projects)
                                                   |-- Docker SDK
                                                   |     `-- Docker socket
                                                   `-- WorkspaceManager
@@ -41,11 +44,13 @@ receives the Docker socket.
 .
 ├── backend/
 │   ├── alembic/
-│   │   └── versions/20260910_0001_create_projects.py
+│   │   └── versions/{20260910_0001_create_projects.py,
+│   │                  20260912_0002_add_firebase_users.py}
 │   ├── app/
+│   │   ├── auth/firebase.py
 │   │   ├── api/projects.py
 │   │   ├── db/{base.py,session.py}
-│   │   ├── models/project.py
+│   │   ├── models/{project.py,user.py}
 │   │   ├── schemas/project.py
 │   │   ├── services/{project_service.py,workspace_manager.py}
 │   │   ├── config.py
@@ -59,8 +64,9 @@ receives the Docker socket.
 │   ├── init-project.sh
 │   └── settings.json
 ├── frontend/
-│   ├── app/{globals.css,layout.tsx,page.tsx}
-│   ├── lib/api.ts
+│   ├── app/{globals.css,layout.tsx,page.tsx,login/page.tsx}
+│   ├── components/auth-provider.tsx
+│   ├── lib/{api.ts,firebase.ts}
 │   ├── Dockerfile
 │   ├── next.config.ts
 │   └── package.json
@@ -78,6 +84,7 @@ receives the Docker socket.
 ## Requirements
 
 - Docker Desktop, or Docker Engine with the Compose plugin
+- A Firebase project with a registered Web app
 - Enough disk space for PostgreSQL, code-server, and TeX Live images
 - Ports 3000, 8000, 5432, and 8100–8199 available by default
 
@@ -103,6 +110,27 @@ POSTGRES_PASSWORD=choose-a-long-local-database-password
 CODE_SERVER_PASSWORD=choose-a-long-local-editor-password
 ```
 
+In Firebase Console, enable **Email/Password** and **Google** under
+Authentication > Sign-in method, then copy the registered Web app configuration
+into the matching `NEXT_PUBLIC_FIREBASE_*` variables in `.env`. Add
+`localhost` to Authentication > Settings > Authorized domains when needed.
+
+The backend must verify browser ID tokens with the same Firebase project. Set
+`FIREBASE_PROJECT_ID`, create a dedicated service account with the minimum
+required access, and save the downloaded key at the ignored path
+`.secrets/firebase-service-account.json`. Compose mounts that directory
+read-only into the backend:
+
+```dotenv
+FIREBASE_PROJECT_ID=your-project-id
+FIREBASE_CREDENTIALS_PATH=/run/secrets/firebase-service-account.json
+```
+
+Never commit the service-account JSON. `FIREBASE_CREDENTIALS_JSON` remains an
+alternative for secret-managed deployments. In a Google-managed production
+runtime, prefer Application Default Credentials instead of a long-lived JSON
+key and leave both credential settings unset there.
+
 Important settings:
 
 | Variable | Default/example | Purpose |
@@ -115,6 +143,10 @@ Important settings:
 | `BACKEND_PORT` | `8000` | API host port |
 | `POSTGRES_PORT` | `5432` | Local inspection port |
 | `NEXT_PUBLIC_API_URL` | `http://localhost:8000` | API URL compiled into the browser bundle |
+| `NEXT_PUBLIC_FIREBASE_*` | Firebase Web app values | Public client configuration compiled into the browser bundle |
+| `FIREBASE_PROJECT_ID` | Firebase project ID | Expected token audience on the backend |
+| `FIREBASE_CREDENTIALS_PATH` | `/run/secrets/firebase-service-account.json` | Read-only service-account key path |
+| `FIREBASE_CREDENTIALS_JSON` | unset | Optional local service-account JSON; secret |
 | `CORS_ORIGINS` | `http://localhost:3000` | Comma-separated allowed browser origins |
 | `WORKSPACE_IMAGE` | `latex-workspace:local` | Dynamic editor image |
 | `WORKSPACE_*_PREFIX` | `easy-latex-*` | Managed Docker resource names |
@@ -126,8 +158,8 @@ The backend connects to `postgres:5432` on the Compose network. `localhost`
 would be incorrect from inside the backend container. All browser-facing ports
 bind to `127.0.0.1` by default.
 
-If `NEXT_PUBLIC_API_URL` changes, rebuild the frontend because it is a public
-build-time setting.
+If `NEXT_PUBLIC_API_URL` or a `NEXT_PUBLIC_FIREBASE_*` value changes, rebuild
+the frontend because these are public build-time settings.
 
 ## Build and start
 
@@ -164,7 +196,8 @@ Adminer is not included; PostgreSQL can be inspected directly with `psql`.
 
 ## Database and migrations
 
-The initial Alembic migration creates one metadata-only table:
+The first Alembic migration creates the `projects` table. The authentication
+migration adds `users` and a nullable `projects.owner_id` foreign key:
 
 | Column | Type | Notes |
 | --- | --- | --- |
@@ -174,6 +207,12 @@ The initial Alembic migration creates one metadata-only table:
 | `updated_at` | timestamptz | Updated with record changes |
 | `workspace_status` | varchar(32) | Last known runtime state |
 | `workspace_identifier` | varchar(255) | Unique named-volume identifier |
+| `owner_id` | UUID | Firebase-backed user who owns the project |
+
+`users.firebase_uid` is unique. The API creates or refreshes the local user
+profile from verified Firebase claims on each authenticated request. Existing
+projects from before the authentication migration keep `owner_id = NULL` and
+are intentionally hidden until an administrator assigns an owner.
 
 LaTeX sources, PDFs, images, and Git data are never stored in PostgreSQL.
 
@@ -203,11 +242,12 @@ SELECT id, name, workspace_status, workspace_identifier FROM projects;
 
 ### Create Project
 
-When the form is submitted, the frontend calls `POST /projects` with only the
-display name. The backend:
+When the form is submitted, the frontend sends a fresh Firebase ID token and
+calls `POST /projects` with the display name. The backend:
 
 1. Trims and validates the name (1–128 characters; control characters rejected).
-2. Generates a UUID and stages the PostgreSQL row.
+2. Associates the project with the authenticated user, generates a UUID, and
+   stages the PostgreSQL row.
 3. Creates a labeled Docker named volume using that UUID, never the raw name.
 4. Runs a short-lived, network-disabled initializer from the workspace image.
 5. Copies `main.tex`, `references.bib`, and `.gitignore` into the empty volume.
@@ -226,8 +266,8 @@ history.
 ### Open Project
 
 The Open button calls `POST /projects/{id}/open` and shows `Starting
-workspace…`. `DockerWorkspaceManager` validates the project's labeled volume,
-then:
+workspace…`. The API first requires the project to belong to the authenticated
+user. `DockerWorkspaceManager` then validates the project's labeled volume and:
 
 - reuses its running container if one exists;
 - restarts its stopped container if one exists; or
@@ -282,14 +322,15 @@ on the next Open action.
 
 ## Edit, compile, preview, and use Git
 
-Open a project, enter `CODE_SERVER_PASSWORD`, then select `main.tex`. LaTeX
-Workshop is preinstalled and configured to build on save with the `latexmk
-(pdf)` recipe.
+Open a project and enter `CODE_SERVER_PASSWORD`. The focused workspace opens
+`main.tex` with the project Explorer on the left and a distraction-free source
+editor in the center. Generated LaTeX files stay out of the Explorer.
 
-- Build: click **Build LaTeX project** in the editor toolbar, or run **LaTeX
-  Workshop: Build LaTeX project** from the Command Palette.
-- Preview: click **View LaTeX PDF file**, or run **LaTeX Workshop: View LaTeX
-  PDF file**. The PDF opens in an editor tab.
+- Compile and preview: click **Compile** (the play icon) in the editor toolbar,
+  or press `Ctrl+Enter` (`Cmd+Enter` on macOS). Auto-build is disabled. After a
+  successful build, the PDF opens in a right-hand editor group.
+- Hide preview: close the PDF tab or its editor group. It stays hidden when the
+  workspace is reopened and returns the next time **Compile** is used.
 - Terminal check:
 
 ```bash
@@ -305,12 +346,16 @@ The initial repository has local author values `Easy LaTeX` and
 user.name` and `git config user.email` commands. The platform does not create
 automatic commits after initialization.
 
-## API
+## Authentication and API
+
+All `/projects` endpoints require `Authorization: Bearer <Firebase ID token>`.
+The backend verifies the token with Firebase Admin, upserts the local user, and
+scopes every project query by that user's UUID. `/health` remains public.
 
 | Method | Path | Result |
 | --- | --- | --- |
 | `GET` | `/health` | Database and Docker availability |
-| `GET` | `/projects` | Project list |
+| `GET` | `/projects` | Current user's project list |
 | `POST` | `/projects` | Create metadata, volume, template, and Git repository |
 | `GET` | `/projects/{id}` | One project |
 | `DELETE` | `/projects/{id}` | Remove editor, files, and metadata |
@@ -322,6 +367,7 @@ Example:
 
 ```bash
 curl -X POST http://localhost:8000/projects \
+  -H 'Authorization: Bearer YOUR_FIREBASE_ID_TOKEN' \
   -H 'Content-Type: application/json' \
   -d '{"name":"My Thesis"}'
 ```
@@ -329,8 +375,9 @@ curl -X POST http://localhost:8000/projects \
 ## Tests
 
 Backend tests use an in-memory database and a fake `WorkspaceManager` to cover
-validation, create/list/open/reuse/status/delete behavior without touching host
-Docker:
+Firebase claim provisioning, missing-token rejection, per-user isolation,
+validation, and create/list/open/reuse/status/delete behavior without touching
+host Docker:
 
 ```bash
 docker build --target test -t latex-platform-backend-test ./backend
@@ -378,11 +425,11 @@ for project cleanup.
 The backend mounts `/var/run/docker.sock` so the Python Docker SDK can create
 and manage editor containers. Access to that socket is effectively
 root-equivalent control of the Docker host. This design is acceptable only for
-this single-user, local MVP:
+local development:
 
 - keep frontend, API, PostgreSQL, and editor ports bound to `127.0.0.1`;
 - do not expose the stack to an untrusted network;
-- do not treat code-server password authentication as platform authorization;
+- do not treat the shared code-server password as user-level authorization;
 - never give the Docker socket to code-server containers or future agents;
 - do not add arbitrary command, image, path, or Docker-name inputs to the API.
 
@@ -472,9 +519,10 @@ artifacts are ignored by Git but intentionally persist in the project volume.
 
 ## Known limitations
 
-- Local, single-user development only; there is no platform authentication or
-  authorization.
-- Every editor uses one shared password from `.env`.
+- Dashboard/API identity and private project ownership are implemented, but
+  sharing, roles, invitations, and real-time collaboration are not.
+- Every editor still uses one shared password from `.env`; production multi-user
+  deployment needs an authenticated workspace gateway or per-user credentials.
 - The Docker socket is highly privileged.
 - Editor routing uses a finite localhost port pool rather than a reverse proxy.
 - Lifecycle locking is process-local; the MVP intentionally runs one backend

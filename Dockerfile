@@ -14,6 +14,7 @@ RUN apt-get update \
         texlive-latex-base \
         texlive-latex-extra \
         texlive-latex-recommended \
+        zip \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -34,8 +35,21 @@ RUN if code-server --install-extension "James-Yu.latex-workshop@${LATEX_WORKSHOP
         echo >&2 "WARNING: LaTeX Workshop could not be installed from Open VSX. See README.md for manual installation steps."; \
     fi
 
+COPY --chown=coder:coder config/patch-latex-workshop.mjs /tmp/patch-latex-workshop.mjs
+RUN /usr/lib/code-server/lib/node /tmp/patch-latex-workshop.mjs \
+    && rm /tmp/patch-latex-workshop.mjs
+
 RUN mkdir -p /home/coder/.local/share/code-server/User
 COPY --chown=coder:coder config/settings.json /home/coder/.local/share/code-server/User/settings.json
+COPY --chown=coder:coder config/easy-latex-workspace/ /tmp/easy-latex-workspace/extension/
+COPY --chown=coder:coder config/easy-latex-workspace-vsix/ /tmp/easy-latex-workspace/
+
+RUN cd /tmp/easy-latex-workspace \
+    && zip -qr /tmp/easy-latex-workspace.vsix . \
+    && code-server --install-extension /tmp/easy-latex-workspace.vsix --force \
+    && code-server --list-extensions --show-versions \
+        | grep -Fqi "easy-latex.easy-latex-workspace@0.1.0" \
+    && rm -rf /tmp/easy-latex-workspace /tmp/easy-latex-workspace.vsix
 
 ENV SHELL=/bin/bash
 
@@ -44,7 +58,7 @@ WORKDIR /home/coder/project
 # Replace the upstream image's fixed workspace argument so this project's
 # workspace is opened explicitly while retaining its fixuid/dumb-init wrapper.
 ENTRYPOINT ["/usr/bin/entrypoint.sh"]
-CMD ["--bind-addr", "0.0.0.0:8080", "--auth", "password", "--disable-telemetry", "/home/coder/project"]
+CMD ["--bind-addr", "0.0.0.0:8080", "--auth", "password", "--disable-telemetry", "--disable-update-check", "/home/coder/project"]
 
 HEALTHCHECK --interval=5s --timeout=3s --start-period=15s --retries=8 \
     CMD curl --fail --silent --show-error http://127.0.0.1:8080/healthz || exit 1

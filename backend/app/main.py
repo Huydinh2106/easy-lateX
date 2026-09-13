@@ -35,7 +35,7 @@ def create_app(workspace_manager: WorkspaceManager | None = None) -> FastAPI:
         allow_origins=settings.cors_origin_list,
         allow_credentials=False,
         allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
-        allow_headers=["Content-Type"],
+        allow_headers=["Content-Type", "Authorization"],
     )
     application.include_router(projects_router)
 

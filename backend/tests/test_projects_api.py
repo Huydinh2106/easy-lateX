@@ -1,13 +1,15 @@
 import uuid
 
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app.api.dependencies import get_current_user
 from app.db.base import Base
 from app.db.session import get_db
 from app.main import create_app
+from app.models.user import User
 from app.services.workspace_manager import WorkspaceManager
 
 
@@ -54,6 +56,14 @@ def test_project_crud_and_workspace_flow() -> None:
     Base.metadata.create_all(engine)
     manager = FakeWorkspaceManager()
     app = create_app(manager)
+    owner = User(id=uuid.uuid4(), firebase_uid="owner-uid", email="owner@example.com")
+    collaborator = User(
+        id=uuid.uuid4(), firebase_uid="collaborator-uid", email="collaborator@example.com"
+    )
+    with testing_session() as db:
+        db.add_all([owner, collaborator])
+        db.commit()
+    active_user = {"value": owner}
 
     def override_db() -> Session:
         db = testing_session()
@@ -63,6 +73,7 @@ def test_project_crud_and_workspace_flow() -> None:
             db.close()
 
     app.dependency_overrides[get_db] = override_db
+    app.dependency_overrides[get_current_user] = lambda: active_user["value"]
 
     with TestClient(app) as client:
         assert client.get("/health").json()["status"] == "ok"
@@ -71,11 +82,20 @@ def test_project_crud_and_workspace_flow() -> None:
         assert created.status_code == 201
         project = created.json()
         assert project["name"] == "Thesis Test"
+        assert project["owner_id"] == str(owner.id)
         project_id = project["id"]
 
         listed = client.get("/projects")
         assert listed.status_code == 200
         assert [item["id"] for item in listed.json()] == [project_id]
+
+        active_user["value"] = collaborator
+        assert client.get("/projects").json() == []
+        assert client.get(f"/projects/{project_id}").status_code == 404
+        assert client.post(f"/projects/{project_id}/open").status_code == 404
+        assert client.delete(f"/projects/{project_id}").status_code == 404
+
+        active_user["value"] = owner
 
         first_open = client.post(f"/projects/{project_id}/open")
         second_open = client.post(f"/projects/{project_id}/open")
@@ -95,6 +115,59 @@ def test_project_crud_and_workspace_flow() -> None:
 def test_project_name_validation() -> None:
     manager = FakeWorkspaceManager()
     app = create_app(manager)
+    app.dependency_overrides[get_current_user] = lambda: User(
+        id=uuid.uuid4(), firebase_uid="test-user"
+    )
     with TestClient(app) as client:
         response = client.post("/projects", json={"name": "   "})
         assert response.status_code == 422
+
+
+def test_firebase_claims_create_user_and_protect_projects(monkeypatch) -> None:
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    testing_session = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+    Base.metadata.create_all(engine)
+    manager = FakeWorkspaceManager()
+    app = create_app(manager)
+
+    def override_db() -> Session:
+        db = testing_session()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    monkeypatch.setattr(
+        "app.api.dependencies.verify_firebase_token",
+        lambda token: {
+            "uid": "firebase-user-1",
+            "email": "writer@example.com",
+            "email_verified": True,
+            "name": "Test Writer",
+            "firebase": {"sign_in_provider": "google.com"},
+        },
+    )
+    app.dependency_overrides[get_db] = override_db
+
+    with TestClient(app) as client:
+        assert client.get("/projects").status_code == 401
+
+        response = client.post(
+            "/projects",
+            headers={"Authorization": "Bearer valid-test-token"},
+            json={"name": "Authenticated project"},
+        )
+        assert response.status_code == 201
+
+    with testing_session() as db:
+        user = db.scalar(select(User).where(User.firebase_uid == "firebase-user-1"))
+        assert user is not None
+        assert user.email == "writer@example.com"
+        assert user.email_verified is True
+        assert user.display_name == "Test Writer"
+        assert user.auth_provider == "google.com"
+        assert response.json()["owner_id"] == str(user.id)

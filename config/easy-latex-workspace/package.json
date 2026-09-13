@@ -1,0 +1,46 @@
+{
+  "name": "easy-latex-workspace",
+  "displayName": "Easy LaTeX Workspace",
+  "description": "A focused compile-and-preview workflow for Easy LaTeX.",
+  "version": "0.1.0",
+  "publisher": "easy-latex",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished",
+    "onCommand:easy-latex.compileAndPreview"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "easy-latex.compileAndPreview",
+        "title": "Compile",
+        "category": "Easy LaTeX",
+        "icon": "$(play)"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "easy-latex.compileAndPreview",
+        "key": "ctrl+enter",
+        "mac": "cmd+enter",
+        "when": "editorLangId =~ /^latex$|^latex-expl3$|^context$|^doctex$|^rsweave$|^jlweave$|^pweave$/ && !virtualWorkspace"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "easy-latex.compileAndPreview",
+          "group": "navigation@1",
+          "when": "editorLangId =~ /^latex$|^latex-expl3$|^context$|^doctex$|^rsweave$|^jlweave$|^pweave$/ && !virtualWorkspace"
+        }
+      ]
+    }
+  }
+}

@@ -5,3 +5,4 @@ alembic==1.16.5
 psycopg[binary]==3.2.9
 docker==7.1.0
 pydantic-settings==2.10.1
+firebase-admin==7.5.0

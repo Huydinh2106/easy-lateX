@@ -1,5 +1,8 @@
+import { getFirebaseAuth } from "@/lib/firebase";
+
 export interface Project {
   id: string;
+  owner_id: string;
   name: string;
   created_at: string;
   updated_at: string;
@@ -19,10 +22,15 @@ const API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"
 );
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const user = getFirebaseAuth().currentUser;
+  if (!user) throw new Error("Please sign in to continue");
+  const idToken = await user.getIdToken();
+
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...init,
     headers: {
       "Content-Type": "application/json",
+      Authorization: `Bearer ${idToken}`,
       ...init?.headers,
     },
   });

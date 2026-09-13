@@ -21,8 +21,14 @@ class ProjectService:
     def __init__(self, workspace_manager: WorkspaceManager) -> None:
         self.workspace_manager = workspace_manager
 
-    def list_projects(self, db: Session) -> list[Project]:
-        projects = list(db.scalars(select(Project).order_by(Project.created_at.desc())))
+    def list_projects(self, db: Session, owner_id: uuid.UUID) -> list[Project]:
+        projects = list(
+            db.scalars(
+                select(Project)
+                .where(Project.owner_id == owner_id)
+                .order_by(Project.created_at.desc())
+            )
+        )
         changed = False
         for project in projects:
             try:
@@ -37,16 +43,19 @@ class ProjectService:
             db.commit()
         return projects
 
-    def get_project(self, db: Session, project_id: uuid.UUID) -> Project:
-        project = db.get(Project, project_id)
+    def get_project(self, db: Session, project_id: uuid.UUID, owner_id: uuid.UUID) -> Project:
+        project = db.scalar(
+            select(Project).where(Project.id == project_id, Project.owner_id == owner_id)
+        )
         if project is None:
             raise ProjectNotFoundError(f"Project {project_id} was not found")
         return project
 
-    def create_project(self, db: Session, name: str) -> Project:
+    def create_project(self, db: Session, name: str, owner_id: uuid.UUID) -> Project:
         project_id = uuid.uuid4()
         project = Project(
             id=project_id,
+            owner_id=owner_id,
             name=name,
             workspace_status="stopped",
             workspace_identifier=f"pending-{project_id}",
@@ -70,16 +79,20 @@ class ProjectService:
                     logger.exception("Could not clean workspace after project creation failed")
             raise
 
-    def open_project(self, db: Session, project_id: uuid.UUID) -> tuple[Project, str]:
-        project = self.get_project(db, project_id)
+    def open_project(
+        self, db: Session, project_id: uuid.UUID, owner_id: uuid.UUID
+    ) -> tuple[Project, str]:
+        project = self.get_project(db, project_id, owner_id)
         status, url = self.workspace_manager.start_workspace(project_id)
         project.workspace_status = status
         db.commit()
         db.refresh(project)
         return project, url
 
-    def workspace_details(self, db: Session, project_id: uuid.UUID) -> tuple[str, str | None]:
-        project = self.get_project(db, project_id)
+    def workspace_details(
+        self, db: Session, project_id: uuid.UUID, owner_id: uuid.UUID
+    ) -> tuple[str, str | None]:
+        project = self.get_project(db, project_id, owner_id)
         status = self.workspace_manager.get_workspace_status(project_id)
         url = self.workspace_manager.get_workspace_url(project_id)
         if project.workspace_status != status:
@@ -87,15 +100,15 @@ class ProjectService:
             db.commit()
         return status, url
 
-    def stop_project(self, db: Session, project_id: uuid.UUID) -> Project:
-        project = self.get_project(db, project_id)
+    def stop_project(self, db: Session, project_id: uuid.UUID, owner_id: uuid.UUID) -> Project:
+        project = self.get_project(db, project_id, owner_id)
         project.workspace_status = self.workspace_manager.stop_workspace(project_id)
         db.commit()
         db.refresh(project)
         return project
 
-    def delete_project(self, db: Session, project_id: uuid.UUID) -> None:
-        project = self.get_project(db, project_id)
+    def delete_project(self, db: Session, project_id: uuid.UUID, owner_id: uuid.UUID) -> None:
+        project = self.get_project(db, project_id, owner_id)
         self.workspace_manager.delete_workspace(project_id)
         db.delete(project)
         db.commit()
