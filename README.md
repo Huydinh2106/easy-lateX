@@ -1,533 +1,215 @@
-# Easy LaTeX platform MVP
+# Easy LaTeX
 
-Easy LaTeX is a local-development platform for creating, listing, opening, and
-deleting isolated browser-based LaTeX projects. A Next.js dashboard and
-Firebase Authentication own the sign-in flow, FastAPI verifies Firebase ID
-tokens and owns project/workspace lifecycle, PostgreSQL stores users and
-project ownership, and a reusable code-server image supplies Git, TeX Live,
-`latexmk`, LaTeX Workshop, and PDF preview.
+Easy LaTeX is a local, end-to-end LaTeX editing platform. It has a Next.js workspace, a NestJS API running on Fastify, PostgreSQL/Prisma metadata, private S3-compatible object storage through MinIO, Redis/BullMQ build jobs, a separate compile worker, and a reproducible TeX Live/`latexmk` compiler image.
 
-This milestone adds multi-user identity and private project ownership as the
-foundation for future sharing and collaboration. It does not yet include
-sharing, roles, real-time collaboration, version-history UI, background jobs,
-AI features, billing, Kubernetes, or production orchestration.
-
-## Architecture
-
-```text
-Browser
-  |-- Firebase Auth <------------------------> Email/password + Google
-  |-- http://localhost:3000 ----------------> Next.js dashboard
-  |                                               |
-  |                                    Firebase ID token
-  |                                               v
-  |-- http://localhost:8000 ----------------> FastAPI
-                                                  |-- PostgreSQL (users + projects)
-                                                  |-- Docker SDK
-                                                  |     `-- Docker socket
-                                                  `-- WorkspaceManager
-                                                         |-- named volume / project
-                                                         `-- code-server / open project
-                                                               |-- Git repository
-                                                               |-- TeX Live + latexmk
-                                                               `-- LaTeX Workshop + PDF viewer
-```
-
-The platform services are managed by Compose. code-server containers are
-created dynamically by `DockerWorkspaceManager`, one per opened project. Each
-container mounts exactly one project volume at `/home/coder/project` and never
-receives the Docker socket.
-
-## Repository structure
-
-```text
-.
-├── backend/
-│   ├── alembic/
-│   │   └── versions/{20260910_0001_create_projects.py,
-│   │                  20260912_0002_add_firebase_users.py}
-│   ├── app/
-│   │   ├── auth/firebase.py
-│   │   ├── api/projects.py
-│   │   ├── db/{base.py,session.py}
-│   │   ├── models/{project.py,user.py}
-│   │   ├── schemas/project.py
-│   │   ├── services/{project_service.py,workspace_manager.py}
-│   │   ├── config.py
-│   │   └── main.py
-│   ├── tests/test_projects_api.py
-│   ├── Dockerfile
-│   ├── alembic.ini
-│   ├── requirements.txt
-│   └── start.sh
-├── config/
-│   ├── init-project.sh
-│   └── settings.json
-├── frontend/
-│   ├── app/{globals.css,layout.tsx,page.tsx,login/page.tsx}
-│   ├── components/auth-provider.tsx
-│   ├── lib/{api.ts,firebase.ts}
-│   ├── Dockerfile
-│   ├── next.config.ts
-│   └── package.json
-├── project-template/
-│   ├── .gitignore
-│   ├── main.tex
-│   └── references.bib
-├── workspace/                 # preserved legacy prototype sample
-├── Dockerfile                 # reusable LaTeX/code-server image
-├── docker-compose.yml
-├── .env.example
-└── README.md
-```
-
-## Requirements
-
-- Docker Desktop, or Docker Engine with the Compose plugin
-- A Firebase project with a registered Web app
-- Enough disk space for PostgreSQL, code-server, and TeX Live images
-- Ports 3000, 8000, 5432, and 8100–8199 available by default
-
-Node, Python, PostgreSQL, and TeX do not need to be installed on the host for
-the Compose workflow.
-
-## Configure
-
-Create the ignored local environment file:
+The default setup uses development authentication and needs no cloud account:
 
 ```bash
-cp .env.example .env
+docker compose up --build
 ```
 
-If upgrading the original prototype and `.env` already exists, do not overwrite
-its password blindly. Merge the new variables from `.env.example` and add a
-`POSTGRES_PASSWORD` instead.
+Open <http://localhost:3000>, create a project, edit `main.tex`, and press **Compile**. The editor saves an immutable source version to MinIO, the API snapshots that version as a project revision, and the worker runs real `latexmk` in an isolated container. The returned PDF and log are read back from MinIO.
 
-Replace both placeholder passwords in `.env`:
+## Architecture and source of truth
 
-```dotenv
-POSTGRES_PASSWORD=choose-a-long-local-database-password
-CODE_SERVER_PASSWORD=choose-a-long-local-editor-password
+```text
+AI Agent (primary) ───────┐
+Visual Editor (secondary) ├──> Document / Project Layer ──> PostgreSQL metadata
+Code Editor (advanced) ───┘                │               + immutable MinIO objects
+                                          ├──> Parser / outline
+                                          ├──> operations, history, events
+                                          └──> immutable ProjectRevision
+                                                        │
+                                                        v
+Browser <── PDF/log API <── MinIO <── compile worker <── BullMQ/Redis
+                                           │
+                                           └── isolated TeX Live/latexmk container
 ```
 
-In Firebase Console, enable **Email/Password** and **Google** under
-Authentication > Sign-in method, then copy the registered Web app configuration
-into the matching `NEXT_PUBLIC_FIREBASE_*` variables in `.env`. Add
-`localhost` to Authentication > Settings > Authorized domains when needed.
+Canonical LaTeX source—`.tex`, `.bib`, `.sty`, `.cls`, figures, and other project assets—is the only source of truth. Monaco state, future visual ASTs, AI conversations, build workspaces, SyncTeX, logs, and PDFs are clients, caches, or derived artifacts. They can be regenerated and never become a second document model.
 
-The backend must verify browser ID tokens with the same Firebase project. Set
-`FIREBASE_PROJECT_ID`, create a dedicated service account with the minimum
-required access, and save the downloaded key at the ignored path
-`.secrets/firebase-service-account.json`. Compose mounts that directory
-read-only into the backend:
+All writes flow through `ProjectDocumentService`. It owns authorization, normalized paths, immutable `FileVersion` objects, checksums, optimistic concurrency, structured operation metadata, project events, history, revision snapshots, and the compiler boundary. A stale `expectedVersion` returns HTTP 409; it never silently overwrites a collaborator's change.
 
-```dotenv
-FIREBASE_PROJECT_ID=your-project-id
-FIREBASE_CREDENTIALS_PATH=/run/secrets/firebase-service-account.json
-```
+The parser derives outline nodes for `part`, `chapter`, `section`, `subsection`, and `subsubsection`, ignores comments, and returns source ranges/line/column data. It is the starting boundary for a round-trip-safe visual editor: unsupported LaTeX remains untouched in canonical source.
 
-Never commit the service-account JSON. `FIREBASE_CREDENTIALS_JSON` remains an
-alternative for secret-managed deployments. In a Google-managed production
-runtime, prefer Application Default Credentials instead of a long-lived JSON
-key and leave both credential settings unset there.
+Collaboration and a future CRDT belong above the same Document Layer and version/operation model. AI, visual, Monaco, Git, and future VS Code integrations must hydrate canonical snapshots and submit versioned operations back through that layer.
 
-Important settings:
+## Services
 
-| Variable | Default/example | Purpose |
-| --- | --- | --- |
-| `POSTGRES_USER` | `latex` | Database role |
-| `POSTGRES_PASSWORD` | required | Database password |
-| `POSTGRES_DB` | `latex_platform` | Metadata database |
-| `DATABASE_URL` | unset | Optional full SQLAlchemy URL override |
-| `FRONTEND_PORT` | `3000` | Dashboard host port |
-| `BACKEND_PORT` | `8000` | API host port |
-| `POSTGRES_PORT` | `5432` | Local inspection port |
-| `NEXT_PUBLIC_API_URL` | `http://localhost:8000` | API URL compiled into the browser bundle |
-| `NEXT_PUBLIC_FIREBASE_*` | Firebase Web app values | Public client configuration compiled into the browser bundle |
-| `FIREBASE_PROJECT_ID` | Firebase project ID | Expected token audience on the backend |
-| `FIREBASE_CREDENTIALS_PATH` | `/run/secrets/firebase-service-account.json` | Read-only service-account key path |
-| `FIREBASE_CREDENTIALS_JSON` | unset | Optional local service-account JSON; secret |
-| `CORS_ORIGINS` | `http://localhost:3000` | Comma-separated allowed browser origins |
-| `WORKSPACE_IMAGE` | `latex-workspace:local` | Dynamic editor image |
-| `WORKSPACE_*_PREFIX` | `easy-latex-*` | Managed Docker resource names |
-| `WORKSPACE_BIND_HOST` | `127.0.0.1` | Editor port bind address |
-| `WORKSPACE_PUBLIC_HOST` | `localhost` | Host returned to the browser |
-| `WORKSPACE_PORT_START/END` | `8100` / `8199` | Deterministic editor port pool |
+| Service | Responsibility |
+| --- | --- |
+| `frontend` | Next.js project dashboard, file explorer, Monaco editor, autosave, outline, AI/PDF panel |
+| `api` | NestJS + Fastify REST/OpenAPI, auth, authorization, Document Layer, Prisma, build enqueue |
+| `compile-worker` | BullMQ consumer, revision hydration, compiler lifecycle, artifact persistence |
+| `compiler` | Reproducible one-shot TeX Live image check; the worker creates isolated children from this image |
+| `postgres` | Users, projects/members, file tree/version metadata, operations, revisions, builds |
+| `redis` | Persistent BullMQ queue, rate-limit and job coordination data |
+| `minio` | Private canonical source versions, manifests, PDFs, logs, SyncTeX |
+| `minio-init` | Idempotently creates and makes the development bucket private |
 
-The backend connects to `postgres:5432` on the Compose network. `localhost`
-would be incorrect from inside the backend container. All browser-facing ports
-bind to `127.0.0.1` by default.
+API and worker are separate processes from the same TypeScript codebase. The API never receives the Docker socket. In local development only, the worker receives it so it can create tightly constrained compiler containers.
 
-If `NEXT_PUBLIC_API_URL` or a `NEXT_PUBLIC_FIREBASE_*` value changes, rebuild
-the frontend because these are public build-time settings.
+## Requirements and quick start
 
-## Build and start
+- Docker Desktop, or Docker Engine with Compose v2
+- approximately 5 GB free space for Node, TeX Live, PostgreSQL, and MinIO images/data
+- ports 3000, 8000, 5432, 9000, and 9001 available on loopback
 
-Validate configuration, build all three application images, and start:
+Node.js and TeX are not required on the host for the application stack.
 
 ```bash
-docker compose config
+cp .env.example .env       # optional: Compose defaults already support development auth
+docker compose up --build
+```
+
+The first compiler image build is intentionally large because TeX Live, BibTeX, Biber, and commonly used LaTeX collections are installed in the image rather than on the host.
+
+### Local URLs and credentials
+
+- Frontend: <http://localhost:3000>
+- API docs: <http://localhost:8000/docs>
+- OpenAPI JSON: <http://localhost:8000/docs-json>
+- Liveness: <http://localhost:8000/health/live>
+- Readiness: <http://localhost:8000/health/ready>
+- MinIO console: <http://localhost:9001>
+- MinIO username: `minio`
+- MinIO password: `minio-development`
+- Development user: `developer@easy-latex.local` (automatic; no login password)
+
+Change all defaults before using the stack outside an isolated development machine. The bucket is private; PDF/source endpoints authorize the project user and stream objects without exposing storage credentials.
+
+## Authentication and project roles
+
+`AUTH_MODE=development` creates/upserts the fixed development user on authenticated API calls. It works only when `NODE_ENV` is not `production`; configuration validation fails startup for development auth in production.
+
+For Firebase:
+
+1. Set `AUTH_MODE=firebase`.
+2. Fill the six `NEXT_PUBLIC_FIREBASE_*` web-app values in `.env`.
+3. Set `FIREBASE_PROJECT_ID`.
+4. Put the service-account file at `.secrets/firebase-service-account.json`, or provide application-default credentials / `FIREBASE_CREDENTIALS_JSON` through a secret manager.
+5. Rebuild `frontend` and `api`.
+
+The browser sends a Firebase ID token as `Authorization: Bearer ...`; Firebase Admin verifies revocation and the API upserts the Firebase UID. Tokens, private keys, and storage credentials are redacted/not logged.
+
+Roles are `OWNER`, `EDITOR`, and `VIEWER`. Owners manage the project and members; editors mutate/compile; viewers read source, build status, authorized PDFs, and logs. Every project-scoped endpoint resolves membership server-side and hides inaccessible project IDs to prevent IDOR.
+
+## Storage and persistence
+
+PostgreSQL is authoritative for the file tree and metadata. Each successful content change creates a provider-neutral object key such as:
+
+```text
+projects/{projectId}/files/{fileId}/versions/{version}
+projects/{projectId}/revisions/{revisionId}/manifest.json
+projects/{projectId}/builds/{buildId}/document.pdf
+projects/{projectId}/builds/{buildId}/compile.log
+projects/{projectId}/builds/{buildId}/document.synctex.gz
+```
+
+The database stores keys, never provider URLs or credentials. Development uses MinIO. Cloudflare R2 and AWS S3 use the existing AWS SDK v3 `S3StorageAdapter` with configuration changes only. Google Cloud Storage can be added as `GcsStorageAdapter implements ObjectStorage`; business modules and the frontend do not change.
+
+Compose named volumes `postgres_data`, `redis_data`, and `minio_data` survive container rebuilds, restarts, and ordinary `docker compose down`. There is no per-project workspace volume and no persistent code-server filesystem.
+
+> **Destructive:** `docker compose down -v` permanently removes the local database, source versions, revisions, PDFs, and logs. Use only for an intentional reset.
+
+## Save and compile behavior
+
+The frontend loads the file tree from the API. It supports text/binary-safe open, create file/folder, upload, download, rename/move (including folder descendants), delete confirmation, and root `.tex` selection. Monaco edits `.tex`, `.bib`, `.sty`, `.cls`, Markdown, and text.
+
+Autosave is debounced about 800 ms and reports Unsaved, Saving, Saved, Save failed, or Version conflict. Network failures retain the editor buffer and retry only twice with backoff. File switches and Compile flush pending content; Compile is refused if the save/conflict is unresolved.
+
+Each build pins an immutable `ProjectRevision`; the worker never compiles live editor state. The compiler invocation is argv-based:
+
+```text
+latexmk -pdf -interaction=nonstopmode -file-line-error -halt-on-error -synctex=1 -no-shell-escape main.tex
+```
+
+The child compiler is non-root, network-disabled, read-only outside its single temporary workspace, capability-free, and protected by CPU, memory, PID, source/log/artifact size, and hard timeout limits. It never receives the Docker socket. Workspaces and child containers are removed after success, syntax failure, infrastructure failure, or timeout. Build infrastructure retries are bounded; LaTeX syntax failures are terminal and do not retry.
+
+The right panel has only AI Chat and PDF Preview. Compile switches to PDF Preview immediately and polls the real build with bounded network backoff. Success shows the exact build's PDF blob; failure shows the stored log and parsed file/line errors that navigate Monaco. The local chat placeholder preserves state while switching tabs; no fake AI backend or second document model is introduced.
+
+## Database and Prisma
+
+The additive migration is `backend/prisma/migrations/20260913000000_document_platform/migration.sql`. It upgrades the earlier FastAPI/Alembic metadata schema without dropping existing projects or resetting data. API startup runs `prisma migrate deploy`, never `db push` and never an automatic reset.
+
+```bash
+make migrate              # deploy existing migrations through Compose
+make migration            # interactive prisma migrate dev
+make seed                 # upsert the development identity
+
+cd backend
+npm run prisma:validate
+npm run prisma:generate
+npm run prisma:migrate -- --name your_change
+```
+
+If Prisma reports `P3005` while adopting a database previously managed only by Alembic, `backend/start-api.sh` applies the idempotent compatibility SQL and records that baseline migration. It does not drop tables or data.
+
+## Development and verification commands
+
+```bash
+make dev                  # docker compose up --build (foreground)
+make lint                 # backend ESLint
+make typecheck            # backend + frontend strict TypeScript checks
+make test                 # backend Jest + frontend Vitest
+make frontend-test
+make e2e                  # full real-compiler smoke, including restart persistence
+make logs
+make worker-logs
+make stop                 # preserves named volumes
+make reset-data CONFIRM=yes   # intentional destructive reset
+```
+
+Direct equivalents:
+
+```bash
+cd backend && npm ci && npm run lint && npm run typecheck && npm test && npm run build
+cd frontend && npm ci && npm run typecheck && npm test && npm run build
 docker compose build
 docker compose up -d --wait
-docker compose ps
+node scripts/e2e-smoke.mjs
 ```
 
-The `workspace-image` Compose service is a successful one-shot image check; it
-is expected to show `Exited (0)`. The long-running services are:
+The E2E smoke uses development auth and a real compiler. It creates/reads/saves `main.tex`, verifies checksum dedup and HTTP 409 conflicts, exercises folder CRUD/move, compiles a successful PDF and checks `%PDF`, reads revisions/history, restarts API/worker and rechecks source/PDF persistence, introduces a genuine LaTeX error and verifies the stored failure log, fixes the source, and compiles successfully again. Set `E2E_KEEP_PROJECT=1` to retain its evidence project; otherwise it cleans up through the authorized API.
 
-- `frontend` — production Next.js server
-- `backend` — FastAPI, SQLAlchemy, Alembic, and Docker workspace management
-- `postgres` — PostgreSQL metadata storage
+CI runs dependency installation, lint, strict typecheck, Prisma validation, backend/frontend tests and builds, all Docker builds, and the real Compose smoke without cloud credentials.
 
-Startup waits for PostgreSQL's `pg_isready` healthcheck. The backend retries and
-runs `alembic upgrade head` before starting Uvicorn. The frontend waits for the
-backend healthcheck.
+## Docker socket notes
 
-### URLs
-
-- Dashboard: <http://localhost:3000>
-- Backend root: <http://localhost:8000>
-- Health: <http://localhost:8000/health>
-- Swagger UI: <http://localhost:8000/docs>
-- OpenAPI JSON: <http://localhost:8000/openapi.json>
-- Dynamic editors: `http://localhost:8100` onward
-
-Adminer is not included; PostgreSQL can be inspected directly with `psql`.
-
-## Database and migrations
-
-The first Alembic migration creates the `projects` table. The authentication
-migration adds `users` and a nullable `projects.owner_id` foreign key:
-
-| Column | Type | Notes |
-| --- | --- | --- |
-| `id` | UUID | Primary key; also drives safe Docker resource names |
-| `name` | varchar(128) | Validated display name |
-| `created_at` | timestamptz | Server-generated |
-| `updated_at` | timestamptz | Updated with record changes |
-| `workspace_status` | varchar(32) | Last known runtime state |
-| `workspace_identifier` | varchar(255) | Unique named-volume identifier |
-| `owner_id` | UUID | Firebase-backed user who owns the project |
-
-`users.firebase_uid` is unique. The API creates or refreshes the local user
-profile from verified Firebase claims on each authenticated request. Existing
-projects from before the authentication migration keep `owner_id = NULL` and
-are intentionally hidden until an administrator assigns an owner.
-
-LaTeX sources, PDFs, images, and Git data are never stored in PostgreSQL.
-
-Migrations run automatically at backend startup. To run or inspect them:
+Launching an isolated sibling compiler through Docker requires local worker access to `/var/run/docker.sock`; this is inherently root-equivalent access to the Docker daemon. The socket is never exposed to the API, frontend, or compiler. Compose keeps the worker process at UID 1000 and adds only the socket's group. Docker Desktop commonly uses group `0`; Linux/CI can set:
 
 ```bash
-docker compose run --rm backend alembic upgrade head
-docker compose exec backend alembic current
-docker compose exec backend alembic history
+export DOCKER_SOCKET_GID=$(stat -c '%g' /var/run/docker.sock)
+docker compose up --build
 ```
 
-Inspect PostgreSQL:
-
-```bash
-docker compose exec postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
-```
-
-Useful commands at the `psql` prompt:
-
-```text
-\d+ projects
-SELECT id, name, workspace_status, workspace_identifier FROM projects;
-\q
-```
-
-## Project lifecycle
-
-### Create Project
-
-When the form is submitted, the frontend sends a fresh Firebase ID token and
-calls `POST /projects` with the display name. The backend:
-
-1. Trims and validates the name (1–128 characters; control characters rejected).
-2. Associates the project with the authenticated user, generates a UUID, and
-   stages the PostgreSQL row.
-3. Creates a labeled Docker named volume using that UUID, never the raw name.
-4. Runs a short-lived, network-disabled initializer from the workspace image.
-5. Copies `main.tex`, `references.bib`, and `.gitignore` into the empty volume.
-6. Initializes a `main` Git repository as the non-root `coder` user and creates
-   the one allowed `Initial project` commit.
-7. Commits the database transaction and returns the project.
-
-If initialization fails, the database transaction rolls back and the newly
-created volume is removed. Project names are never interpolated into shell,
-container, path, or volume names.
-
-Generated PDFs are ignored by the project `.gitignore`. They remain useful
-local build products in the persistent volume without bloating future Git
-history.
-
-### Open Project
-
-The Open button calls `POST /projects/{id}/open` and shows `Starting
-workspace…`. The API first requires the project to belong to the authenticated
-user. `DockerWorkspaceManager` then validates the project's labeled volume and:
-
-- reuses its running container if one exists;
-- restarts its stopped container if one exists; or
-- allocates the first free managed port and creates one editor container.
-
-The container mounts only that project's named volume at
-`/home/coder/project`, uses password authentication from `.env`, and opens that
-folder automatically. The API waits for code-server's healthcheck and returns
-the URL; the dashboard navigates there. Repeated opens do not create duplicate
-containers.
-
-The optional `POST /projects/{id}/stop` endpoint stops the editor but preserves
-its container and volume. `GET /projects/{id}/workspace` reports current status
-and URL.
-
-### Delete Project
-
-The dashboard asks for confirmation, then calls `DELETE /projects/{id}`. The
-backend resolves the UUID record, validates the expected management and
-project labels, removes that one editor container, removes that one named
-volume, and finally deletes the database row. It never accepts a filesystem
-path or arbitrary Docker resource name from the browser.
-
-Deletion is permanent: it removes the project's LaTeX files, PDF artifacts,
-and nested Git repository.
-
-## Persistent storage and isolation
-
-Each project is stored in a Docker-managed named volume such as:
-
-```text
-easy-latex-project-550e8400-e29b-41d4-a716-446655440000
-└── mounted at /home/coder/project
-    ├── .git/
-    ├── .gitignore
-    ├── main.tex
-    └── references.bib
-```
-
-List resources managed by the platform:
-
-```bash
-docker volume ls --filter label=com.easy-latex.managed=true
-docker ps -a --filter label=com.easy-latex.managed=true
-```
-
-Named volumes survive backend restarts, editor restarts, image rebuilds, and
-`docker compose down`. PostgreSQL uses the separate
-`latex-platform_postgres_data` Compose volume. During a normal backend shutdown,
-managed editor containers are stopped to release resources; they are restarted
-on the next Open action.
-
-## Edit, compile, preview, and use Git
-
-Open a project and enter `CODE_SERVER_PASSWORD`. The focused workspace opens
-`main.tex` with the project Explorer on the left and a distraction-free source
-editor in the center. Generated LaTeX files stay out of the Explorer.
-
-- Compile and preview: click **Compile** (the play icon) in the editor toolbar,
-  or press `Ctrl+Enter` (`Cmd+Enter` on macOS). Auto-build is disabled. After a
-  successful build, the PDF opens in a right-hand editor group.
-- Hide preview: close the PDF tab or its editor group. It stays hidden when the
-  workspace is reopened and returns the next time **Compile** is used.
-- Terminal check:
-
-```bash
-cd /home/coder/project
-latexmk -pdf main.tex
-test -s main.pdf && echo "PDF generated successfully"
-git status
-git log --oneline
-```
-
-The initial repository has local author values `Easy LaTeX` and
-`easy-latex@localhost`. Users may replace them with normal `git config
-user.name` and `git config user.email` commands. The platform does not create
-automatic commits after initialization.
-
-## Authentication and API
-
-All `/projects` endpoints require `Authorization: Bearer <Firebase ID token>`.
-The backend verifies the token with Firebase Admin, upserts the local user, and
-scopes every project query by that user's UUID. `/health` remains public.
-
-| Method | Path | Result |
-| --- | --- | --- |
-| `GET` | `/health` | Database and Docker availability |
-| `GET` | `/projects` | Current user's project list |
-| `POST` | `/projects` | Create metadata, volume, template, and Git repository |
-| `GET` | `/projects/{id}` | One project |
-| `DELETE` | `/projects/{id}` | Remove editor, files, and metadata |
-| `POST` | `/projects/{id}/open` | Reuse/start editor and return its URL |
-| `GET` | `/projects/{id}/workspace` | Current editor status and URL |
-| `POST` | `/projects/{id}/stop` | Stop editor; preserve project |
-
-Example:
-
-```bash
-curl -X POST http://localhost:8000/projects \
-  -H 'Authorization: Bearer YOUR_FIREBASE_ID_TOKEN' \
-  -H 'Content-Type: application/json' \
-  -d '{"name":"My Thesis"}'
-```
-
-## Tests
-
-Backend tests use an in-memory database and a fake `WorkspaceManager` to cover
-Firebase claim provisioning, missing-token rejection, per-user isolation,
-validation, and create/list/open/reuse/status/delete behavior without touching
-host Docker:
-
-```bash
-docker build --target test -t latex-platform-backend-test ./backend
-docker run --rm latex-platform-backend-test
-```
-
-Frontend checks:
-
-```bash
-cd frontend
-npm ci
-npm run typecheck
-npm run build
-```
-
-For a manual integration check, create two projects from the dashboard, open
-both, confirm distinct ports and volumes, edit/compile one, restart the platform,
-reopen it, and confirm the second is unchanged. Then delete one and verify only
-its labeled container, volume, and database row disappear.
-
-## Stop and reset
-
-Stop the platform while preserving PostgreSQL and every project volume:
-
-```bash
-docker compose down
-```
-
-The safest complete reset is to start the API, delete each project from the
-dashboard so cleanup remains scoped by validated UUID and Docker labels, then
-remove the Compose database volume:
-
-```bash
-docker compose down --volumes
-```
-
-The second command is destructive to PostgreSQL metadata but does not discover
-or delete dynamic project volumes by itself. If the API is unavailable, inspect
-the label-filtered lists carefully before manually removing dynamic containers
-and volumes. Never use an unfiltered Docker prune or broad filesystem deletion
-for project cleanup.
-
-## Docker socket security
-
-The backend mounts `/var/run/docker.sock` so the Python Docker SDK can create
-and manage editor containers. Access to that socket is effectively
-root-equivalent control of the Docker host. This design is acceptable only for
-local development:
-
-- keep frontend, API, PostgreSQL, and editor ports bound to `127.0.0.1`;
-- do not expose the stack to an untrusted network;
-- do not treat the shared code-server password as user-level authorization;
-- never give the Docker socket to code-server containers or future agents;
-- do not add arbitrary command, image, path, or Docker-name inputs to the API.
-
-`WorkspaceManager` keeps Docker operations behind a replaceable interface so a
-future milestone can move to a less-privileged runtime without changing route
-handlers.
+On macOS, `stat -f '%g' /var/run/docker.sock` may be used if a native (non-Desktop-proxied) socket has a different group. If the worker logs `EACCES /var/run/docker.sock`, verify the mounted socket, its group, and `DOCKER_SOCKET_GID`. Never mount the socket into untrusted application or compiler containers.
 
 ## Troubleshooting
 
-### Compose rejects the configuration
+- **API not ready:** run `docker compose logs api postgres minio redis`; readiness checks all three dependencies.
+- **Worker build remains RUNNING:** run `docker compose logs compile-worker` and inspect Docker socket permissions.
+- **Compiler image missing:** run `docker compose build compiler compile-worker` and ensure `COMPILER_IMAGE` matches both services.
+- **MinIO login fails:** use the `S3_ACCESS_KEY`/`S3_SECRET_KEY` values from your current `.env`, not necessarily the defaults above.
+- **Changed `NEXT_PUBLIC_*` value has no effect:** rebuild `frontend`; these values are embedded at build time.
+- **Port already in use:** override `FRONTEND_PORT`, `BACKEND_PORT`, `POSTGRES_PORT`, `MINIO_PORT`, or `MINIO_CONSOLE_PORT` in `.env`.
+- **Old local containers remain:** run `docker compose up --remove-orphans`; do not add `-v` unless local data should be erased.
+- **Inspect persisted objects:** open the MinIO console or use the `mc` image with matching credentials.
 
-Create `.env` and replace both required placeholder passwords. Then run:
+## Repository layout
 
-```bash
-docker compose config
+```text
+backend/
+  prisma/                 schema, additive migration, development seed
+  src/
+    auth/ database/ storage/ projects/ document/ files/ operations/
+    revisions/ parser/ builds/ compiler/ collaboration/ health/ common/
+  test/                   Jest unit/service/worker tests
+compiler/                 reproducible non-root TeX Live image
+frontend/                 Next.js App Router, Monaco workspace, Vitest tests
+scripts/e2e-smoke.mjs     non-mocked Compose/LaTeX persistence smoke
+docker-compose.yml
+Makefile
 ```
 
-### PostgreSQL is unhealthy or authentication fails
-
-```bash
-docker compose ps
-docker compose logs postgres
-docker compose logs backend
-```
-
-Changing PostgreSQL credentials after its named volume is initialized does not
-rewrite the existing database role. Restore the original values or perform the
-documented destructive reset.
-
-### Docker is unavailable to the backend
-
-Ensure Docker is running, `/var/run/docker.sock` exists, and the Docker Desktop
-context supports the socket mount. `/health` returns 503 when either PostgreSQL
-or Docker is unavailable.
-
-### Workspace image is missing
-
-```bash
-docker compose build workspace-image
-docker image inspect latex-workspace:local
-```
-
-Keep `WORKSPACE_IMAGE` identical for Compose and the backend.
-
-### No workspace port is free
-
-Inspect `WORKSPACE_PORT_START` through `WORKSPACE_PORT_END` and managed
-containers. Expand the range or free the conflicting localhost port, then
-retry Open Project.
-
-### An editor still uses an old password or image
-
-Existing editor containers preserve their original environment and image.
-Delete only the affected editor container (not its named project volume); the
-next Open action recreates it. Inspect labels and mounts before removal.
-
-### Project files are missing
-
-The API returns a curated 503 if the expected UUID-derived, correctly labeled
-volume is absent. Check backend logs and `docker volume ls` rather than creating
-an unlabeled replacement manually.
-
-### LaTeX Workshop is absent
-
-The image build installs and verifies the pinned Open VSX extension. Rebuild
-with network access and inspect:
-
-```bash
-docker run --rm latex-workspace:local --list-extensions --show-versions
-```
-
-The list should include `james-yu.latex-workshop`.
-
-### Compilation or PDF preview fails
-
-Open the LaTeX Workshop output panel and confirm `main.tex` compiles first. In
-the integrated terminal:
-
-```bash
-cd /home/coder/project
-latexmk -pdf -interaction=nonstopmode main.tex
-ls -lh main.pdf
-```
-
-Reload code-server, reopen `main.tex`, and use **View LaTeX PDF file**. Build
-artifacts are ignored by Git but intentionally persist in the project volume.
-
-## Known limitations
-
-- Dashboard/API identity and private project ownership are implemented, but
-  sharing, roles, invitations, and real-time collaboration are not.
-- Every editor still uses one shared password from `.env`; production multi-user
-  deployment needs an authenticated workspace gateway or per-user credentials.
-- The Docker socket is highly privileged.
-- Editor routing uses a finite localhost port pool rather than a reverse proxy.
-- Lifecycle locking is process-local; the MVP intentionally runs one backend
-  process/worker.
-- There are no resource quotas, idle timeouts, backups, renaming, sharing,
-  collaboration, version-history UI, automatic commits, or AI features.
-- Docker named volumes are local to the current Docker host and are not a
-  backup strategy.
+The retired Python/FastAPI and permanent code-server workspace implementation has been removed after parity and E2E verification. NestJS/Fastify plus the Document Layer is the single backend source of truth.

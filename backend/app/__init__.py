@@ -1,1 +1,0 @@
-"""Easy LaTeX platform backend."""

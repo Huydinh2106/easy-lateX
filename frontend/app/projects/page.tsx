@@ -116,38 +116,6 @@ const academicTemplates: AcademicTemplate[] = [
   },
 ];
 
-const IS_LOCAL_PREVIEW = process.env.NODE_ENV === "development";
-
-const previewProjects: Project[] = [
-  {
-    id: "demo",
-    owner_id: "preview-user",
-    name: "Neural Networks for Scientific Discovery",
-    created_at: "2026-09-08T03:20:00.000Z",
-    updated_at: "2026-09-12T09:42:00.000Z",
-    workspace_status: "running",
-    workspace_identifier: "preview-neural-networks",
-  },
-  {
-    id: "demo-thesis",
-    owner_id: "preview-user",
-    name: "Graph Learning for Urban Mobility",
-    created_at: "2026-08-21T08:00:00.000Z",
-    updated_at: "2026-09-11T14:16:00.000Z",
-    workspace_status: "stopped",
-    workspace_identifier: "preview-graph-learning",
-  },
-  {
-    id: "demo-survey",
-    owner_id: "preview-user",
-    name: "Reliable AI Systems — Literature Survey",
-    created_at: "2026-09-01T02:30:00.000Z",
-    updated_at: "2026-09-10T04:28:00.000Z",
-    workspace_status: "running",
-    workspace_identifier: "preview-reliable-ai",
-  },
-];
-
 function formatDate(value: string): string {
   return new Intl.DateTimeFormat(undefined, {
     dateStyle: "medium",
@@ -157,13 +125,6 @@ function formatDate(value: string): string {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Something went wrong";
-}
-
-function statusLabel(status: string): string {
-  if (status === "running") return "Ready";
-  if (status === "starting") return "Starting";
-  if (status === "stopped") return "Stopped";
-  return status.replaceAll("_", " ");
 }
 
 function initials(name: string): string {
@@ -178,7 +139,7 @@ function initials(name: string): string {
 export default function ProjectsPage() {
   const router = useRouter();
   const auth = useAuth();
-  const [projects, setProjects] = useState<Project[]>(IS_LOCAL_PREVIEW ? previewProjects : []);
+  const [projects, setProjects] = useState<Project[]>([]);
   const [name, setName] = useState("");
   const [aiPrompt, setAiPrompt] = useState("");
   const [selectedTemplate, setSelectedTemplate] = useState<AcademicTemplate>(academicTemplates[0]!);
@@ -187,10 +148,10 @@ export default function ProjectsPage() {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<ProjectFilter>("all");
   const [viewMode, setViewMode] = useState<ViewMode>("list");
-  const [favorites, setFavorites] = useState<Set<string>>(new Set(["demo"]));
+  const [favorites, setFavorites] = useState<Set<string>>(new Set());
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [docClass, setDocClass] = useState("article");
-  const [loading, setLoading] = useState(!IS_LOCAL_PREVIEW);
+  const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -255,10 +216,6 @@ export default function ProjectsPage() {
   }, [auth.user]);
 
   useEffect(() => {
-    if (IS_LOCAL_PREVIEW && !auth.user) {
-      setLoading(false);
-      return;
-    }
     if (!auth.loading && !auth.user) {
       router.replace("/login");
       return;
@@ -279,9 +236,9 @@ export default function ProjectsPage() {
       if (filter === "favorites") {
         matchesFilter = favorites.has(project.id);
       } else if (filter === "mine") {
-        matchesFilter = !project.owner_id.startsWith("shared-");
+        matchesFilter = project.currentRole === "OWNER";
       } else if (filter === "shared") {
-        matchesFilter = project.owner_id.startsWith("shared-");
+        matchesFilter = project.currentRole !== "OWNER";
       }
       return matchesQuery && matchesFilter;
     });
@@ -306,44 +263,17 @@ export default function ProjectsPage() {
     setCreating(true);
     setError(null);
 
-    const generatedId = `project-${Date.now()}`;
     const initialPrompt = createPath === "ai" && aiPrompt.trim() ? aiPrompt.trim() : "";
-
-    if (initialPrompt) {
-      try {
-        window.sessionStorage.setItem(`easy-latex-prompt:${generatedId}`, initialPrompt);
-      } catch {
-        // Ignored
-      }
-    }
-
-    if (IS_LOCAL_PREVIEW && !auth.user) {
-      const now = new Date().toISOString();
-      const newProj: Project = {
-        id: generatedId,
-        owner_id: "preview-user",
-        name: finalTitle,
-        created_at: now,
-        updated_at: now,
-        workspace_status: "running",
-        workspace_identifier: `preview-${Date.now()}`,
-      };
-      setProjects((current) => [newProj, ...current]);
-      try {
-        window.sessionStorage.setItem(`easy-latex-project:${generatedId}`, finalTitle);
-      } catch {
-        // Ignored
-      }
-      setName("");
-      setAiPrompt("");
-      setCreateOpen(false);
-      setCreating(false);
-      router.push(`/projects/${generatedId}`);
-      return;
-    }
 
     try {
       const created = await createProject(finalTitle);
+      if (initialPrompt) {
+        try {
+          window.sessionStorage.setItem(`easy-latex-prompt:${created.id}`, initialPrompt);
+        } catch {
+          // Storage access may be restricted.
+        }
+      }
       setName("");
       setAiPrompt("");
       setCreateOpen(false);
@@ -359,7 +289,6 @@ export default function ProjectsPage() {
   function handleOpen(project: Project) {
     setOpeningId(project.id);
     setError(null);
-    if (IS_LOCAL_PREVIEW) window.sessionStorage.setItem(`easy-latex-project:${project.id}`, project.name);
     router.push(`/projects/${project.id}`);
   }
 
@@ -374,11 +303,6 @@ export default function ProjectsPage() {
   async function handleDelete(project: Project) {
     setDeletingId(project.id);
     setError(null);
-    if (IS_LOCAL_PREVIEW && !auth.user) {
-      setProjects((current) => current.filter((item) => item.id !== project.id));
-      setDeletingId(null);
-      return;
-    }
     try {
       await deleteProject(project.id);
       setProjects((current) => current.filter((item) => item.id !== project.id));
@@ -407,10 +331,10 @@ export default function ProjectsPage() {
     document.getElementById("workspace-content")?.scrollIntoView({ behavior: "smooth" });
   }
 
-  const userName = auth.user?.displayName || auth.user?.email?.split("@")[0] || (IS_LOCAL_PREVIEW ? "Dinh Viet Huy" : "Account");
+  const userName = auth.user?.displayName || auth.user?.email?.split("@")[0] || "Account";
   const userInitials = initials(userName) || "U";
 
-  if (!IS_LOCAL_PREVIEW && (auth.loading || !auth.user)) {
+  if (auth.loading || !auth.user) {
     return (
       <main className="auth-loading" aria-busy="true">
         <LoaderCircle className="spinner" aria-hidden="true" />
@@ -543,7 +467,7 @@ export default function ProjectsPage() {
                 <DropdownMenu.Content className="dropdown-content account-menu" align="end" sideOffset={4}>
                   <DropdownMenu.Label className="account-menu-header">
                     <strong>{userName}</strong>
-                    <span>{auth.user?.email || "Preview workspace"}</span>
+                    <span>{auth.user?.email || "Authenticated workspace"}</span>
                   </DropdownMenu.Label>
                   <DropdownMenu.Separator className="dropdown-separator" />
                   <DropdownMenu.Item
@@ -849,18 +773,12 @@ export default function ProjectsPage() {
                         </p>
 
                         <div className="project-grid-meta">
-                          <time dateTime={project.updated_at} suppressHydrationWarning>
-                            {formatDate(project.updated_at)}
+                          <time dateTime={project.updatedAt} suppressHydrationWarning>
+                            {formatDate(project.updatedAt)}
                           </time>
-                          <span className={`status status-${project.workspace_status}`}>
-                            {project.workspace_status === "running" ? <Check aria-hidden="true" /> : null}
-                            {project.workspace_status === "starting" ? (
-                              <LoaderCircle className="spinner" aria-hidden="true" />
-                            ) : null}
-                            {!["running", "starting"].includes(project.workspace_status) ? (
-                              <span className="status-dot" aria-hidden="true" />
-                            ) : null}
-                            {statusLabel(project.workspace_status)}
+                          <span className="status status-running">
+                            <Check aria-hidden="true" />
+                            {project.latestSuccessfulBuildId ? "PDF ready" : "Ready"}
                           </span>
                         </div>
                       </li>
@@ -907,18 +825,12 @@ export default function ProjectsPage() {
                               <span className="project-meta">Academic document</span>
                             </div>
                           </div>
-                          <time dateTime={project.updated_at} suppressHydrationWarning>
-                            {formatDate(project.updated_at)}
+                          <time dateTime={project.updatedAt} suppressHydrationWarning>
+                            {formatDate(project.updatedAt)}
                           </time>
-                          <span className={`status status-${project.workspace_status}`}>
-                            {project.workspace_status === "running" ? <Check aria-hidden="true" /> : null}
-                            {project.workspace_status === "starting" ? (
-                              <LoaderCircle className="spinner" aria-hidden="true" />
-                            ) : null}
-                            {!["running", "starting"].includes(project.workspace_status) ? (
-                              <span className="status-dot" aria-hidden="true" />
-                            ) : null}
-                            {statusLabel(project.workspace_status)}
+                          <span className="status status-running">
+                            <Check aria-hidden="true" />
+                            {project.latestSuccessfulBuildId ? "PDF ready" : "Ready"}
                           </span>
                           <div className="actions" onClick={(e) => e.stopPropagation()}>
                             <DropdownMenu.Root>

@@ -1,82 +1,134 @@
 name: latex-platform
 
+x-backend-environment: &backend-environment
+  NODE_ENV: ${NODE_ENV:-development}
+  AUTH_MODE: ${AUTH_MODE:-development}
+  PORT: 8000
+  DATABASE_URL: postgresql://${POSTGRES_USER:-latex}:${POSTGRES_PASSWORD:-latex-development}@postgres:5432/${POSTGRES_DB:-latex_platform}?schema=public
+  REDIS_URL: redis://redis:6379
+  CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+  FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:-}
+  FIREBASE_CREDENTIALS_PATH: ${FIREBASE_CREDENTIALS_PATH:-/run/secrets/firebase-service-account.json}
+  STORAGE_DRIVER: s3
+  S3_PROVIDER: minio
+  S3_ENDPOINT: http://minio:9000
+  S3_BUCKET: ${S3_BUCKET:-easy-latex}
+  S3_ACCESS_KEY: ${S3_ACCESS_KEY:-minio}
+  S3_SECRET_KEY: ${S3_SECRET_KEY:-minio-development}
+  S3_REGION: ${S3_REGION:-auto}
+  S3_FORCE_PATH_STYLE: "true"
+  COMPILER_IMAGE: ${COMPILER_IMAGE:-easy-latex-compiler:local}
+  COMPILE_WORKSPACE_BASE: /tmp/easy-latex-compile
+  COMPILE_TIMEOUT_MS: ${COMPILE_TIMEOUT_MS:-120000}
+  MAX_PROJECT_SOURCE_BYTES: ${MAX_PROJECT_SOURCE_BYTES:-52428800}
+  MAX_COMPILE_LOG_BYTES: ${MAX_COMPILE_LOG_BYTES:-5242880}
+  MAX_ARTIFACT_BYTES: ${MAX_ARTIFACT_BYTES:-52428800}
+
 services:
   postgres:
     image: postgres:17.6-bookworm
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-latex}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-latex-development}
       POSTGRES_DB: ${POSTGRES_DB:-latex_platform}
-    ports:
-      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
+    ports: ["127.0.0.1:${POSTGRES_PORT:-5432}:5432"]
+    volumes: ["postgres_data:/var/lib/postgresql/data"]
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
-      retries: 12
-      start_period: 10s
+      retries: 20
 
-  workspace-image:
-    build:
-      context: .
-      args:
-        CODE_SERVER_VERSION: ${CODE_SERVER_VERSION:-4.135.0}
-        LATEX_WORKSHOP_VERSION: ${LATEX_WORKSHOP_VERSION:-10.18.0}
-    image: ${WORKSPACE_IMAGE:-latex-workspace:local}
-    command: ["--version"]
+  redis:
+    image: redis:7.4.5-bookworm
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes: ["redis_data:/data"]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  minio:
+    image: quay.io/minio/minio:RELEASE.2025-07-23T15-54-02Z
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY:-minio}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:-minio-development}
+    ports:
+      - "127.0.0.1:${MINIO_PORT:-9000}:9000"
+      - "127.0.0.1:${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes: ["minio_data:/data"]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  minio-init:
+    image: quay.io/minio/mc:RELEASE.2025-07-21T05-28-08Z
+    depends_on:
+      minio: { condition: service_healthy }
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY:-minio}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:-minio-development}
+      S3_BUCKET: ${S3_BUCKET:-easy-latex}
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["mc alias set local http://minio:9000 $${MINIO_ROOT_USER} $${MINIO_ROOT_PASSWORD} && mc mb --ignore-existing local/$${S3_BUCKET} && mc anonymous set none local/$${S3_BUCKET}"]
     restart: "no"
 
-  backend:
+  compiler:
+    build: ./compiler
+    image: ${COMPILER_IMAGE:-easy-latex-compiler:local}
+    command: ["latexmk", "--version"]
+    restart: "no"
+
+  api:
     build:
       context: ./backend
       target: runtime
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER:-latex}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
-      POSTGRES_DB: ${POSTGRES_DB:-latex_platform}
-      POSTGRES_HOST: postgres
-      POSTGRES_PORT: 5432
-      DATABASE_URL: ${DATABASE_URL:-}
-      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
-      FIREBASE_PROJECT_ID: ${FIREBASE_PROJECT_ID:-}
-      FIREBASE_CREDENTIALS_JSON: ${FIREBASE_CREDENTIALS_JSON:-}
-      FIREBASE_CREDENTIALS_PATH: ${FIREBASE_CREDENTIALS_PATH:-/run/secrets/firebase-service-account.json}
-      WORKSPACE_IMAGE: ${WORKSPACE_IMAGE:-latex-workspace:local}
-      WORKSPACE_VOLUME_PREFIX: ${WORKSPACE_VOLUME_PREFIX:-easy-latex-project}
-      WORKSPACE_CONTAINER_PREFIX: ${WORKSPACE_CONTAINER_PREFIX:-easy-latex-workspace}
-      WORKSPACE_BIND_HOST: ${WORKSPACE_BIND_HOST:-127.0.0.1}
-      WORKSPACE_PUBLIC_HOST: ${WORKSPACE_PUBLIC_HOST:-localhost}
-      WORKSPACE_PORT_START: ${WORKSPACE_PORT_START:-8100}
-      WORKSPACE_PORT_END: ${WORKSPACE_PORT_END:-8199}
-      CODE_SERVER_PASSWORD: ${CODE_SERVER_PASSWORD:?Set CODE_SERVER_PASSWORD in .env}
-      DOCKER_HOST: unix:///var/run/docker.sock
-    ports:
-      - "127.0.0.1:${BACKEND_PORT:-8000}:8000"
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - ./.secrets:/run/secrets:ro
+    environment: *backend-environment
+    ports: ["127.0.0.1:${BACKEND_PORT:-8000}:8000"]
+    volumes: ["./.secrets:/run/secrets:ro"]
     depends_on:
-      postgres:
-        condition: service_healthy
-        restart: true
-      workspace-image:
-        condition: service_completed_successfully
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      minio-init: { condition: service_completed_successfully }
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).read()"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8000/health/ready').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
       interval: 10s
       timeout: 5s
-      retries: 6
-      start_period: 20s
+      retries: 12
+      start_period: 30s
+
+  compile-worker:
+    build:
+      context: ./backend
+      target: runtime
+    command: ["node", "dist/worker.js"]
+    environment: *backend-environment
+    # Docker Desktop exposes its proxied socket as root:root 0660. Keep the
+    # process itself non-root (uid 1000) and grant only the supplementary group
+    # needed to reach that local-development socket.
+    group_add: ["${DOCKER_SOCKET_GID:-0}"]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /tmp/easy-latex-compile:/tmp/easy-latex-compile
+    depends_on:
+      api: { condition: service_healthy }
+      compiler: { condition: service_completed_successfully }
+    restart: unless-stopped
 
   frontend:
     build:
       context: ./frontend
       args:
         NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+        NEXT_PUBLIC_AUTH_MODE: ${AUTH_MODE:-development}
         NEXT_PUBLIC_FIREBASE_API_KEY: ${NEXT_PUBLIC_FIREBASE_API_KEY:-}
         NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: ${NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN:-}
         NEXT_PUBLIC_FIREBASE_PROJECT_ID: ${NEXT_PUBLIC_FIREBASE_PROJECT_ID:-}
@@ -86,19 +138,18 @@ services:
     environment:
       PORT: 3000
       HOSTNAME: 0.0.0.0
-    ports:
-      - "127.0.0.1:${FRONTEND_PORT:-3000}:3000"
+    ports: ["127.0.0.1:${FRONTEND_PORT:-3000}:3000"]
     depends_on:
-      backend:
-        condition: service_healthy
-        restart: true
+      api: { condition: service_healthy }
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000').then(r => { if (!r.ok) process.exit(1) }).catch(() => process.exit(1))"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
       interval: 10s
       timeout: 5s
-      retries: 6
-      start_period: 20s
+      retries: 12
+      start_period: 30s
 
 volumes:
   postgres_data:
+  redis_data:
+  minio_data:

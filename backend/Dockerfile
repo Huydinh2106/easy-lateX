@@ -1,28 +1,30 @@
-FROM python:3.12.11-slim-bookworm AS runtime
-
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    PYTHONPATH=/app
-
+FROM node:22.19.0-bookworm-slim AS dependencies
 WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends openssl && rm -rf /var/lib/apt/lists/*
+COPY package.json package-lock.json ./
+COPY prisma ./prisma
+RUN npm ci --no-audit --no-fund
 
-COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+FROM dependencies AS builder
+COPY tsconfig.json tsconfig.build.json nest-cli.json ./
+COPY src ./src
+RUN npm run build
 
-COPY alembic.ini ./
-COPY alembic ./alembic
-COPY app ./app
-COPY --chmod=0755 start.sh /usr/local/bin/start-platform-backend
-
+FROM node:22.19.0-bookworm-slim AS runtime
+ENV NODE_ENV=development
+WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates openssl && rm -rf /var/lib/apt/lists/*
+COPY --from=dependencies --chown=node:node /app/node_modules ./node_modules
+COPY --from=builder --chown=node:node /app/dist ./dist
+COPY --from=builder --chown=node:node /app/node_modules/.prisma ./node_modules/.prisma
+COPY --chown=node:node package.json ./
+COPY --chown=node:node prisma ./prisma
+COPY --chmod=0755 start-api.sh /usr/local/bin/start-easy-latex-api
+USER node
 EXPOSE 8000
+CMD ["start-easy-latex-api"]
 
-CMD ["start-platform-backend"]
-
-FROM runtime AS test
-
-COPY requirements-dev.txt ./
-RUN pip install --no-cache-dir -r requirements-dev.txt
-COPY tests ./tests
-
-CMD ["pytest", "-q"]
+FROM builder AS test
+COPY test ./test
+COPY jest.config.cjs eslint.config.mjs ./
+CMD ["npm", "test"]

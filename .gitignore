@@ -6,9 +6,31 @@
 frontend/.next/
 frontend/node_modules/
 frontend/*.tsbuildinfo
-backend/.pytest_cache/
 backend/**/__pycache__/
 backend/**/*.pyc
+
+# Node build and dependency artifacts
+backend/node_modules/
+backend/dist/
+backend/coverage/
+backend/*.tsbuildinfo
+frontend/node_modules/
+frontend/.next/
+frontend/coverage/
+
+# Compile workspaces are temporary and never canonical source.
+.compile-workspaces/
+
+# Artifacts left by the retired local workspace are non-canonical and ignored.
+workspace/*.aux
+workspace/*.bbl
+workspace/*.blg
+workspace/*.fdb_latexmk
+workspace/*.fls
+workspace/*.log
+workspace/*.out
+workspace/*.pdf
+workspace/*.synctex.gz
 
 # Local credentials are mounted read-only into the backend container.
 .secrets/*

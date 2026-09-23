@@ -2490,6 +2490,317 @@ button:disabled {
   }
 }
 
+/* Canonical source workspace: extends the original Easy LaTeX shell. */
+.canonical-code-workspace {
+  height: 100dvh;
+  overflow: hidden;
+}
+
+.canonical-code-workspace .workspace-main {
+  height: calc(100dvh - var(--app-topbar-height));
+  padding: var(--space-3);
+  overflow: hidden;
+  background: var(--color-bg-canvas);
+}
+
+.canonical-code-workspace:has(.workspace-system-banner) .workspace-main {
+  height: calc(100dvh - var(--app-topbar-height) - 32px);
+}
+
+.canonical-code-workspace .project-sidebar {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.canonical-code-workspace .project-file-tree {
+  min-height: 100px;
+  flex: 1 1 auto;
+  overflow: auto;
+}
+
+.canonical-upload-button,
+.canonical-file-actions button {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  flex: 0 0 auto;
+  padding: 0;
+  place-items: center;
+  color: var(--color-text-muted);
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-control);
+  cursor: pointer;
+}
+
+.canonical-upload-button:hover,
+.canonical-file-actions button:hover:not(:disabled) {
+  color: var(--color-text-primary);
+  background: var(--color-bg-hover);
+}
+
+.canonical-upload-button svg,
+.canonical-file-actions svg {
+  width: 14px;
+  height: 14px;
+}
+
+.canonical-upload-button input {
+  display: none;
+}
+
+.canonical-tree-spacer {
+  width: 12px;
+  flex: 0 0 12px;
+}
+
+.file-tree-row .canonical-root-star {
+  width: 12px;
+  height: 12px;
+  margin-left: auto;
+  color: var(--color-warning);
+  fill: currentcolor;
+}
+
+.canonical-tree-empty,
+.canonical-outline-empty {
+  padding: var(--space-4) var(--space-2);
+  color: var(--color-text-muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+.canonical-file-actions {
+  display: flex;
+  min-height: 38px;
+  align-items: center;
+  gap: 2px;
+  padding: var(--space-1) var(--space-2);
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.canonical-file-actions > span {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  color: var(--color-text-muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.canonical-file-actions button:disabled {
+  cursor: default;
+  opacity: 0.35;
+}
+
+.canonical-file-actions .canonical-danger {
+  color: var(--color-danger);
+}
+
+.canonical-code-workspace .document-outline {
+  max-height: 34%;
+  flex: 0 1 240px;
+  overflow: auto;
+  border-top: 1px solid var(--color-border-subtle);
+}
+
+.canonical-code-workspace .outline-item {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.canonical-code-workspace .outline-item small {
+  color: var(--color-text-disabled);
+}
+
+.canonical-editor-shell {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-panel);
+  box-shadow: var(--shadow-whisper);
+}
+
+.canonical-editor-header {
+  display: flex;
+  height: 44px;
+  flex: 0 0 44px;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: 0 var(--space-3);
+  color: var(--color-text-secondary);
+  border-bottom: 1px solid var(--color-border-subtle);
+  font-size: 12px;
+}
+
+.canonical-editor-header span {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.canonical-editor-header svg {
+  width: 15px;
+  height: 15px;
+  color: var(--color-accent);
+}
+
+.canonical-editor-header small {
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+.canonical-editor-surface {
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.canonical-editor-empty,
+.canonical-build-state {
+  display: flex;
+  height: 100%;
+  min-height: 180px;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-5);
+  color: var(--color-text-muted);
+  text-align: center;
+}
+
+.canonical-editor-empty > svg,
+.canonical-build-state > svg {
+  width: 28px;
+  height: 28px;
+  color: var(--color-accent);
+}
+
+.canonical-editor-empty p,
+.canonical-build-state span {
+  margin: 0;
+  font-size: 12px;
+}
+
+.canonical-build-state strong {
+  color: var(--color-text-primary);
+}
+
+.canonical-code-workspace .context-panel {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.canonical-pdf-panel {
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  background: var(--color-bg-muted);
+}
+
+.canonical-pdf-panel object {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: var(--color-bg-surface);
+}
+
+.canonical-build-failed {
+  height: 100%;
+  padding: var(--space-4);
+  overflow: auto;
+  background: var(--color-bg-surface);
+}
+
+.canonical-build-failed > svg {
+  width: 20px;
+  color: var(--color-danger);
+}
+
+.canonical-build-failed h3 {
+  margin: var(--space-2) 0 var(--space-4);
+  font-size: 15px;
+}
+
+.canonical-build-failed button {
+  display: block;
+  width: 100%;
+  margin-bottom: var(--space-1);
+  padding: var(--space-2);
+  color: var(--color-danger);
+  background: var(--color-danger-soft);
+  border: 0;
+  border-radius: var(--radius-control);
+  font-size: 12px;
+  text-align: left;
+}
+
+.canonical-build-failed pre {
+  max-height: 55dvh;
+  padding: var(--space-3);
+  overflow: auto;
+  color: #d9e1ee;
+  background: #171b23;
+  border-radius: var(--radius-control);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.canonical-agent-note {
+  color: var(--color-text-muted);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.canonical-save-failed,
+.canonical-save-conflict {
+  color: var(--color-danger);
+}
+
+.canonical-code-workspace .workspace-system-banner span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.canonical-code-workspace .workspace-system-banner .workspace-icon-button {
+  width: 24px;
+  height: 24px;
+  margin-left: var(--space-2);
+  color: inherit;
+}
+
+@media (max-width: 767px) {
+  .canonical-code-workspace .workspace-main {
+    grid-column: 1;
+    padding: var(--space-2);
+  }
+
+  .canonical-code-workspace .context-panel {
+    display: none;
+  }
+
+  .canonical-code-workspace .project-actions .pdf-topbar-button {
+    display: none;
+  }
+}
+
 @keyframes fade-in {
   from {
     opacity: 0;

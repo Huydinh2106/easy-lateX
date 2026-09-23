@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            backend/package-lock.json
+            frontend/package-lock.json
+      - run: npm ci
+        working-directory: backend
+      - run: npm ci
+        working-directory: frontend
+      - run: npm run lint
+        working-directory: backend
+      - run: npm run typecheck
+        working-directory: backend
+      - run: npm run prisma:validate
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://latex:latex@localhost:5432/latex_platform
+      - run: npm test
+        working-directory: backend
+      - run: npm run build
+        working-directory: backend
+      - run: npm run typecheck
+        working-directory: frontend
+      - run: npm test
+        working-directory: frontend
+      - run: npm run build
+        working-directory: frontend
+        env:
+          NEXT_PUBLIC_AUTH_MODE: development
+
+  docker-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Match the Docker socket group used by the non-root worker
+        run: echo "DOCKER_SOCKET_GID=$(stat -c '%g' /var/run/docker.sock)" >> "$GITHUB_ENV"
+      - run: docker compose build
+      - run: docker compose up -d --wait
+      - run: node scripts/e2e-smoke.mjs
+      - if: always()
+        run: docker compose logs --no-color api compile-worker frontend
+      - if: always()
+        run: docker compose down -v
