@@ -1,0 +1,17 @@
+{
+  "name": "@easy-latex/latex",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --project tsconfig.json",
+    "test": "vitest run",
+    "build": "tsc --project tsconfig.json"
+  },
+  "devDependencies": {
+    "@easy-latex/shared-types": "*",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0"
+  }
+}

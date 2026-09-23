@@ -1,37 +1,30 @@
+.DS_Store
 .env
 .env.*
 !.env.example
-.DS_Store
-
-frontend/.next/
-frontend/node_modules/
-frontend/*.tsbuildinfo
-backend/**/__pycache__/
-backend/**/*.pyc
-
-# Node build and dependency artifacts
-backend/node_modules/
-backend/dist/
-backend/coverage/
-backend/*.tsbuildinfo
-frontend/node_modules/
-frontend/.next/
-frontend/coverage/
-
-# Compile workspaces are temporary and never canonical source.
-.compile-workspaces/
-
-# Artifacts left by the retired local workspace are non-canonical and ignored.
-workspace/*.aux
-workspace/*.bbl
-workspace/*.blg
-workspace/*.fdb_latexmk
-workspace/*.fls
-workspace/*.log
-workspace/*.out
-workspace/*.pdf
-workspace/*.synctex.gz
-
-# Local credentials are mounted read-only into the backend container.
 .secrets/*
 !.secrets/.gitkeep
+
+node_modules/
+dist/
+out/
+coverage/
+.vite/
+*.tsbuildinfo
+
+# Electron Forge output
+apps/desktop/.vite/
+apps/desktop/out/
+
+# Local LaTeX build products
+.easy-latex/build/
+*.aux
+*.bbl
+*.bcf
+*.blg
+*.fdb_latexmk
+*.fls
+*.log
+*.out
+*.run.xml
+*.synctex.gz

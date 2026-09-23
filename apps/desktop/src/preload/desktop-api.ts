@@ -1,0 +1,60 @@
+import { ipcRenderer } from "electron";
+import type { CompileEvent, CompileOptions, DesktopApi, FileChangeEvent } from "@easy-latex/shared-types";
+
+const channels = {
+  projectOpen: "project:open",
+  projectCurrent: "project:current",
+  projectSetRoot: "project:set-root",
+  fileList: "file:list",
+  fileRead: "file:read",
+  fileWrite: "file:write",
+  fileChanged: "file:changed",
+  compilerBuild: "compiler:build",
+  compilerCancel: "compiler:cancel",
+  compilerEvent: "compiler:event",
+  synctexForward: "synctex:forward",
+  synctexInverse: "synctex:inverse",
+  gitStatus: "git:status",
+  settingsAll: "settings:all",
+  settingsGet: "settings:get",
+  settingsSet: "settings:set"
+} as const;
+
+export const desktopApi: DesktopApi = {
+  project: {
+    open: () => ipcRenderer.invoke(channels.projectOpen),
+    current: () => ipcRenderer.invoke(channels.projectCurrent),
+    setRoot: (rootDocument) => ipcRenderer.invoke(channels.projectSetRoot, rootDocument)
+  },
+  file: {
+    list: () => ipcRenderer.invoke(channels.fileList),
+    read: (path) => ipcRenderer.invoke(channels.fileRead, path),
+    write: (input) => ipcRenderer.invoke(channels.fileWrite, input),
+    onChanged(callback) {
+      const listener = (_event: Electron.IpcRendererEvent, value: FileChangeEvent): void => callback(value);
+      ipcRenderer.on(channels.fileChanged, listener);
+      return () => ipcRenderer.removeListener(channels.fileChanged, listener);
+    }
+  },
+  compiler: {
+    build: (options?: CompileOptions) => ipcRenderer.invoke(channels.compilerBuild, options),
+    cancel: () => ipcRenderer.invoke(channels.compilerCancel),
+    onEvent(callback) {
+      const listener = (_event: Electron.IpcRendererEvent, value: CompileEvent): void => callback(value);
+      ipcRenderer.on(channels.compilerEvent, listener);
+      return () => ipcRenderer.removeListener(channels.compilerEvent, listener);
+    }
+  },
+  synctex: {
+    forward: (input) => ipcRenderer.invoke(channels.synctexForward, input),
+    inverse: (input) => ipcRenderer.invoke(channels.synctexInverse, input)
+  },
+  git: {
+    status: () => ipcRenderer.invoke(channels.gitStatus)
+  },
+  settings: {
+    all: () => ipcRenderer.invoke(channels.settingsAll),
+    get: (key) => ipcRenderer.invoke(channels.settingsGet, key),
+    set: (key, value) => ipcRenderer.invoke(channels.settingsSet, key, value)
+  }
+};
