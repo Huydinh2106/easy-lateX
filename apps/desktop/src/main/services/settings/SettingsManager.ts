@@ -53,6 +53,15 @@ export class SettingsManager {
     await this.persist();
   }
 
+  async removeRecentProject(workspacePath: string): Promise<void> {
+    await this.load();
+    this.settings = {
+      ...this.settings,
+      recentProjects: this.settings.recentProjects.filter((candidate) => candidate !== workspacePath)
+    };
+    await this.persist();
+  }
+
   private sanitize(input: AppSettings): AppSettings {
     const compilerEngine = ["pdflatex", "xelatex", "lualatex"].includes(input.compilerEngine) ? input.compilerEngine : "pdflatex";
     return {

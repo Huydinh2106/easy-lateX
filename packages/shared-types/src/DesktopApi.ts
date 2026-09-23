@@ -1,6 +1,6 @@
 import type { CompileEvent, CompileOptions, CompileResult } from "./CompileResult";
 import type { FileChangeEvent, FileContent, FileEntry, WriteFileInput, WriteFileResult } from "./FileEntry";
-import type { OpenProjectResult, Project } from "./Project";
+import type { OpenProjectResult, Project, RecentProject } from "./Project";
 import type { AppSettingKey, AppSettings, UserSettingKey } from "./Settings";
 
 export interface SyncTeXForwardInput {
@@ -33,6 +33,9 @@ export interface GitStatus {
 export interface DesktopApi {
   project: {
     open(): Promise<OpenProjectResult | null>;
+    openRecent(workspacePath: string): Promise<OpenProjectResult>;
+    recent(): Promise<RecentProject[]>;
+    forgetRecent(workspacePath: string): Promise<RecentProject[]>;
     current(): Promise<OpenProjectResult | null>;
     setRoot(rootDocument: string): Promise<Project>;
   };

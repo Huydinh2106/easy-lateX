@@ -8,7 +8,8 @@ import type {
   FileEntry,
   GitStatus,
   LatexEngine,
-  OpenProjectResult
+  OpenProjectResult,
+  RecentProject
 } from "@easy-latex/shared-types";
 import type { SaveState } from "../features/compile/CompileToolbar";
 
@@ -36,6 +37,7 @@ export interface JumpTarget {
 
 export function useWorkspaceController() {
   const [projectResult, setProjectResult] = useState<OpenProjectResult | null>(null);
+  const [recentProjects, setRecentProjects] = useState<RecentProject[]>([]);
   const [files, setFiles] = useState<FileEntry[]>([]);
   const [activeFile, setActiveFile] = useState<FileContent | null>(null);
   const [content, setContent] = useState("");
@@ -61,6 +63,12 @@ export function useWorkspaceController() {
     const next = await window.desktop.file.list();
     setFiles(next);
     return next;
+  }, []);
+
+  const refreshRecentProjects = useCallback(async (): Promise<RecentProject[]> => {
+    const recent = await window.desktop.project.recent();
+    setRecentProjects(recent);
+    return recent;
   }, []);
 
   const loadFile = useCallback(async (filePath: string): Promise<FileContent> => {
@@ -125,8 +133,14 @@ export function useWorkspaceController() {
     setCompileEvent(idleCompileEvent);
     setPdfStale(false);
     setError(null);
-    setGit(await window.desktop.git.status());
-  }, [loadFile, refreshFiles]);
+    const [gitStatus, loadedSettings] = await Promise.all([
+      window.desktop.git.status(),
+      window.desktop.settings.all(),
+      refreshRecentProjects()
+    ]);
+    setGit(gitStatus);
+    setSettings(loadedSettings);
+  }, [loadFile, refreshFiles, refreshRecentProjects]);
 
   const openProject = useCallback(async (): Promise<void> => {
     if (dirtyRef.current && !await save()) return;
@@ -138,9 +152,54 @@ export function useWorkspaceController() {
     }
   }, [hydrateProject, save]);
 
+  const openRecentProject = useCallback(async (workspacePath: string): Promise<boolean> => {
+    if (dirtyRef.current && !await save()) return false;
+    setError(null);
+    try {
+      const result = await window.desktop.project.openRecent(workspacePath);
+      await hydrateProject(result);
+      return true;
+    } catch (caught) {
+      setError(readableError(caught, "Could not open the recent project"));
+      await refreshRecentProjects().catch(() => undefined);
+      return false;
+    }
+  }, [hydrateProject, refreshRecentProjects, save]);
+
+  const showProjects = useCallback(async (): Promise<void> => {
+    if (dirtyRef.current && !await save()) return;
+    const compiling = ["starting", "running", "cancelling"].includes(compileEvent.phase);
+    if (compiling) await window.desktop.compiler.cancel().catch(() => false);
+    loadingSequence.current += 1;
+    activeFileRef.current = null;
+    contentRef.current = "";
+    dirtyRef.current = false;
+    setProjectResult(null);
+    setFiles([]);
+    setActiveFile(null);
+    setContent("");
+    setCompileResult(null);
+    setCompileEvent(idleCompileEvent);
+    setPdfOpen(false);
+    setPdfStale(false);
+    setProblemsOpen(false);
+    setError(null);
+    await refreshRecentProjects().catch((caught: unknown) => setError(readableError(caught, "Could not refresh recent projects")));
+  }, [compileEvent.phase, refreshRecentProjects, save]);
+
+  const forgetRecentProject = useCallback(async (workspacePath: string): Promise<void> => {
+    try {
+      setRecentProjects(await window.desktop.project.forgetRecent(workspacePath));
+      setError(null);
+    } catch (caught) {
+      setError(readableError(caught, "Could not remove the project from recents"));
+    }
+  }, []);
+
   useEffect(() => {
-    void Promise.all([window.desktop.settings.all(), window.desktop.project.current()]).then(async ([loadedSettings, current]) => {
+    void Promise.all([window.desktop.settings.all(), window.desktop.project.current(), window.desktop.project.recent()]).then(async ([loadedSettings, current, recent]) => {
       setSettings(loadedSettings);
+      setRecentProjects(recent);
       if (current) await hydrateProject(current);
     }).catch((caught: unknown) => setError(readableError(caught, "Application startup failed")));
   }, [hydrateProject]);
@@ -227,6 +286,7 @@ export function useWorkspaceController() {
 
   return {
     projectResult,
+    recentProjects,
     files,
     texFiles,
     activeFile,
@@ -243,6 +303,9 @@ export function useWorkspaceController() {
     error,
     jumpTarget,
     openProject,
+    openRecentProject,
+    forgetRecentProject,
+    showProjects,
     openFile,
     save,
     changeContent,

@@ -3,6 +3,9 @@ import type { CompileEvent, CompileOptions, DesktopApi, FileChangeEvent } from "
 
 const channels = {
   projectOpen: "project:open",
+  projectOpenRecent: "project:open-recent",
+  projectRecent: "project:recent",
+  projectForgetRecent: "project:forget-recent",
   projectCurrent: "project:current",
   projectSetRoot: "project:set-root",
   fileList: "file:list",
@@ -23,6 +26,9 @@ const channels = {
 export const desktopApi: DesktopApi = {
   project: {
     open: () => ipcRenderer.invoke(channels.projectOpen),
+    openRecent: (workspacePath) => ipcRenderer.invoke(channels.projectOpenRecent, workspacePath),
+    recent: () => ipcRenderer.invoke(channels.projectRecent),
+    forgetRecent: (workspacePath) => ipcRenderer.invoke(channels.projectForgetRecent, workspacePath),
     current: () => ipcRenderer.invoke(channels.projectCurrent),
     setRoot: (rootDocument) => ipcRenderer.invoke(channels.projectSetRoot, rootDocument)
   },

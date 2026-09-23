@@ -1,5 +1,8 @@
 export const channels = {
   projectOpen: "project:open",
+  projectOpenRecent: "project:open-recent",
+  projectRecent: "project:recent",
+  projectForgetRecent: "project:forget-recent",
   projectCurrent: "project:current",
   projectSetRoot: "project:set-root",
   fileList: "file:list",

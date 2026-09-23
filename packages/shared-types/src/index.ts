@@ -2,5 +2,5 @@ export type { CompileEvent, CompileOptions, CompilePhase, CompileResult } from "
 export type { DesktopApi, GitStatus, SyncTeXForwardInput, SyncTeXInverseInput, SyncTeXResult } from "./DesktopApi";
 export type { Diagnostic, DiagnosticSeverity } from "./Diagnostic";
 export type { FileChangeEvent, FileContent, FileEntry, FileEntryKind, WriteFileInput, WriteFileResult } from "./FileEntry";
-export type { LatexEngine, OpenProjectResult, Project } from "./Project";
+export type { LatexEngine, OpenProjectResult, Project, RecentProject } from "./Project";
 export type { AppSettingKey, AppSettings, UserSettingKey } from "./Settings";

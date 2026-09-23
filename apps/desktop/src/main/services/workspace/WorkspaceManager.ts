@@ -1,8 +1,8 @@
-import { readFile, rename, writeFile } from "node:fs/promises";
+import { readFile, rename, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { dialog, type BrowserWindow } from "electron";
 import { findRootCandidates } from "@easy-latex/latex";
-import type { OpenProjectResult, Project } from "@easy-latex/shared-types";
+import type { OpenProjectResult, Project, RecentProject } from "@easy-latex/shared-types";
 import type { FileManager } from "../filesystem/FileManager";
 import type { FileWatcher } from "../filesystem/FileWatcher";
 import type { SettingsManager } from "../settings/SettingsManager";
@@ -48,6 +48,39 @@ export class WorkspaceManager {
     this.watcher.start(canonical);
     await this.settings.addRecentProject(canonical);
     return structuredClone(this.currentProject);
+  }
+
+  async openRecent(workspacePath: string): Promise<OpenProjectResult> {
+    const recentProjects = await this.settings.get("recentProjects");
+    const requested = this.pathKey(path.resolve(workspacePath));
+    const remembered = recentProjects.find((candidate) => this.pathKey(path.resolve(candidate)) === requested);
+    if (!remembered) throw new Error("This folder is not in your recent projects");
+    try {
+      return await this.openPath(remembered);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "ENOENT" || code === "ENOTDIR") {
+        throw new Error("The project folder is no longer available at its previous location");
+      }
+      throw error;
+    }
+  }
+
+  async recent(): Promise<RecentProject[]> {
+    const recentProjects = await this.settings.get("recentProjects");
+    return Promise.all(recentProjects.map(async (workspacePath) => {
+      const available = await stat(workspacePath).then((info) => info.isDirectory()).catch(() => false);
+      return { name: path.basename(workspacePath), workspacePath, available };
+    }));
+  }
+
+  async forgetRecent(workspacePath: string): Promise<RecentProject[]> {
+    const recentProjects = await this.settings.get("recentProjects");
+    const requested = this.pathKey(path.resolve(workspacePath));
+    const remembered = recentProjects.find((candidate) => this.pathKey(path.resolve(candidate)) === requested);
+    if (!remembered) throw new Error("This folder is not in your recent projects");
+    await this.settings.removeRecentProject(remembered);
+    return this.recent();
   }
 
   current(): OpenProjectResult | null {
@@ -107,5 +140,9 @@ export class WorkspaceManager {
     const temporary = `${metadataPath}.tmp`;
     await writeFile(temporary, `${JSON.stringify(metadata, null, 2)}\n`, "utf8");
     await rename(temporary, metadataPath);
+  }
+
+  private pathKey(value: string): string {
+    return process.platform === "win32" ? value.toLowerCase() : value;
   }
 }

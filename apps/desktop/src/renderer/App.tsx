@@ -1,7 +1,8 @@
-import { BookOpenText, CircleAlert, FileText, FolderOpen, X } from "lucide-react";
+import { CircleAlert, FileText, X } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { StatusBar } from "./components/StatusBar";
 import { CompileToolbar } from "./features/compile/CompileToolbar";
+import { ProjectDashboard } from "./features/dashboard/ProjectDashboard";
 import { LatexEditor, type LatexEditorHandle } from "./features/editor/LatexEditor";
 import { PdfViewer } from "./features/pdf/PdfViewer";
 import { ProblemsPanel } from "./features/problems/ProblemsPanel";
@@ -19,21 +20,14 @@ export function App() {
 
   if (!workspace.projectResult) {
     return (
-      <main className="welcome-shell">
-        <section className="welcome-content">
-          <span className="welcome-mark" aria-hidden="true">TeX</span>
-          <h1>Write and compile LaTeX locally.</h1>
-          <p>Open a normal project folder. Your source stays on your filesystem and is compiled by your installed TeX distribution.</p>
-          <button className="button button-primary button-large" type="button" onClick={() => void workspace.openProject()}>
-            <FolderOpen aria-hidden="true" /> Open project folder
-          </button>
-          <div className="welcome-capabilities" aria-label="Application capabilities">
-            <span><BookOpenText /> CodeMirror editor</span>
-            <span><FileText /> PDF.js preview</span>
-          </div>
-        </section>
-        {workspace.error ? <div className="toast toast-error" role="alert"><CircleAlert />{workspace.error}<button type="button" onClick={workspace.clearError} aria-label="Dismiss"><X /></button></div> : null}
-      </main>
+      <ProjectDashboard
+        recentProjects={workspace.recentProjects}
+        error={workspace.error}
+        onNewProject={workspace.openProject}
+        onOpenRecent={workspace.openRecentProject}
+        onForgetRecent={workspace.forgetRecentProject}
+        onDismissError={workspace.clearError}
+      />
     );
   }
 
@@ -54,7 +48,7 @@ export function App() {
         saveState={workspace.saveState}
         compileEvent={workspace.compileEvent}
         pdfOpen={workspace.pdfOpen}
-        onOpenProject={() => void workspace.openProject()}
+        onShowProjects={() => void workspace.showProjects()}
         onSave={() => void workspace.save()}
         onSetRoot={(path) => void workspace.setRoot(path)}
         onSetEngine={(engine) => void workspace.setEngine(engine)}

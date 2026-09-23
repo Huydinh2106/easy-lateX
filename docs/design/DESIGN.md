@@ -6,8 +6,9 @@
 - **Source of truth:** this document
 
 Easy LaTeX is a focused desktop application for opening, editing, compiling,
-and previewing ordinary LaTeX projects. It is not a browser dashboard and it
-must not look or behave like a general-purpose IDE.
+and previewing ordinary LaTeX projects. Its project dashboard borrows the calm,
+document-focused hierarchy of the earlier product while remaining a local
+desktop experience. It must not behave like a cloud portal or general-purpose IDE.
 
 ## 1. Product principles
 
@@ -30,7 +31,43 @@ The MVP hierarchy is:
 Authentication, cloud sync, collaboration, AI writing, terminal access, and a
 visual/WYSIWYG document editor are outside this release.
 
-## 2. Canonical workspace
+## 2. Project dashboard and canonical workspace
+
+The dashboard is the application entry point. It uses a fixed local-workspace
+sidebar, a compact breadcrumb top bar, and a spacious recent-project surface.
+It retains the recognizable visual language of the earlier interface without
+restoring accounts, shared ownership, network loading, or database-backed cards.
+
+- `Projects` represents folders the user previously selected on this computer.
+- `New project` opens the native folder picker, where a folder may be selected
+  or created.
+- Search, availability filters, and list/grid views operate entirely in memory.
+- Recent paths are read through a narrow main-process API and opening a recent
+  path is allowed only when it is already in trusted settings.
+- Missing folders stay visible with an explicit state and a recoverable error.
+- Removing a recent entry only forgets its path; it never deletes project files.
+- Starred projects and templates may be visible as disabled navigation context;
+  they must not pretend that unavailable features or data already exist.
+- The footer states that the workspace is private and filesystem-backed.
+
+The dashboard follows this layout:
+
+```text
+┌───────────────┬────────────────────────────────────────────────────┐
+│ Easy LaTeX    │ Local workspace  ›  Projects          New   Avatar │
+├───────────────┼────────────────────────────────────────────────────┤
+│ Local         │ Projects                         New project        │
+│ workspace     │ Continue writing / description                     │
+│               │                                                    │
+│ Projects      │ Search       All / Available / Missing   List/Grid │
+│ Starred       │ ────────────────────────────────────────────────── │
+│ Templates     │ Recent local folders or first-project empty state  │
+│               │                                                    │
+│ Private       │ Filesystem-first workspace                         │
+└───────────────┴────────────────────────────────────────────────────┘
+```
+
+After opening a project, the canonical editor workspace is:
 
 ```text
 ┌────────────────────────────────────────────────────────────────────┐

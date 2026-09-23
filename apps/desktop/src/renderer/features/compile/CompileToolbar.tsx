@@ -1,4 +1,4 @@
-import { Check, CircleAlert, FileText, FolderOpen, LoaderCircle, PanelRight, Play, Save, Square } from "lucide-react";
+import { Check, CircleAlert, FileText, LayoutGrid, LoaderCircle, PanelRight, Play, Save, Square } from "lucide-react";
 import type { CompileEvent, FileEntry, LatexEngine, Project } from "@easy-latex/shared-types";
 
 export type SaveState = "saved" | "modified" | "saving" | "conflict" | "failed";
@@ -10,7 +10,7 @@ interface CompileToolbarProps {
   saveState: SaveState;
   compileEvent: CompileEvent;
   pdfOpen: boolean;
-  onOpenProject(): void;
+  onShowProjects(): void;
   onSave(): void;
   onSetRoot(path: string): void;
   onSetEngine(engine: LatexEngine): void;
@@ -32,8 +32,8 @@ export function CompileToolbar(props: CompileToolbarProps) {
     <header className="app-topbar">
       <div className="project-identity">
         <span className="product-mark" aria-hidden="true">TeX</span>
-        <button className="project-name-button" type="button" onClick={props.onOpenProject} title={props.project.workspacePath}>
-          <span>{props.project.name}</span><FolderOpen aria-hidden="true" />
+        <button className="project-name-button" type="button" onClick={props.onShowProjects} title="Back to projects">
+          <span>{props.project.name}</span><LayoutGrid aria-hidden="true" />
         </button>
       </div>
       <div className="document-controls">
