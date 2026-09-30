@@ -1,9 +1,10 @@
 import { dialog, ipcMain, type BrowserWindow } from "electron";
 import { channels } from "./channels";
-import { assertString, assertTrustedSender, parseWriteFileInput } from "./validation";
+import { assertString, assertTrustedSender, parseDroppedFileInput, parseMoveFileInput, parseWriteFileInput } from "./validation";
 import type { FileManager } from "../services/filesystem/FileManager";
+import type { WorkspaceManager } from "../services/workspace/WorkspaceManager";
 
-export function registerFileIpc(files: FileManager, getWindow: () => BrowserWindow | null): void {
+export function registerFileIpc(files: FileManager, workspace: WorkspaceManager, getWindow: () => BrowserWindow | null): void {
   ipcMain.handle(channels.fileList, async (event) => {
     assertTrustedSender(event, getWindow()?.webContents ?? null);
     return files.list();
@@ -23,6 +24,15 @@ export function registerFileIpc(files: FileManager, getWindow: () => BrowserWind
   ipcMain.handle(channels.fileCreateDirectory, async (event, value: unknown) => {
     assertTrustedSender(event, getWindow()?.webContents ?? null);
     return files.createDirectory(assertString(value, "Folder path"));
+  });
+  ipcMain.handle(channels.fileMove, async (event, value: unknown) => {
+    assertTrustedSender(event, getWindow()?.webContents ?? null);
+    const input = parseMoveFileInput(value);
+    return workspace.movePath(input.sourcePath, input.targetPath);
+  });
+  ipcMain.handle(channels.fileRemove, async (event, value: unknown) => {
+    assertTrustedSender(event, getWindow()?.webContents ?? null);
+    return workspace.removePath(assertString(value, "File or folder path"));
   });
   ipcMain.handle(channels.fileImportFiles, async (event, value: unknown) => {
     const window = getWindow();
@@ -47,6 +57,11 @@ export function registerFileIpc(files: FileManager, getWindow: () => BrowserWind
     };
     const result = window ? await dialog.showOpenDialog(window, options) : await dialog.showOpenDialog(options);
     return result.canceled ? { paths: [] } : files.importFolders(result.filePaths, destination);
+  });
+  ipcMain.handle(channels.fileImportDropped, async (event, value: unknown) => {
+    assertTrustedSender(event, getWindow()?.webContents ?? null);
+    const input = parseDroppedFileInput(value);
+    return files.importDroppedItems(input.sourcePaths, input.destinationDirectory);
   });
 }
 

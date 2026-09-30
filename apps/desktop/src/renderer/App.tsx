@@ -68,8 +68,11 @@ export function App() {
           onOpen={(path) => void workspace.openFile(path)}
           onCreateFile={workspace.createFile}
           onCreateDirectory={workspace.createDirectory}
+          onMove={workspace.movePath}
+          onRemove={workspace.removePath}
           onImportFiles={workspace.importFiles}
           onImportFolder={workspace.importFolder}
+          onImportDropped={workspace.importDropped}
         />
 
         <main className="editor-workspace">

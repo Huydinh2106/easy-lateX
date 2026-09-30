@@ -32,6 +32,11 @@ export interface FileMutationResult {
   paths: string[];
 }
 
+export interface MoveFileInput {
+  sourcePath: string;
+  targetPath: string;
+}
+
 export interface FileChangeEvent {
   path?: string;
   kind: "changed" | "renamed" | "rescan";

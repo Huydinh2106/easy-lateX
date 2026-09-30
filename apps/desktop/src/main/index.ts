@@ -78,7 +78,7 @@ async function bootstrap(): Promise<void> {
   const getWindow = (): BrowserWindow | null => mainWindow;
 
   registerProjectIpc(workspace, getWindow);
-  registerFileIpc(files, getWindow);
+  registerFileIpc(files, workspace, getWindow);
   registerCompilerIpc(compiler, getWindow);
   registerSyncTeXIpc(synctex, getWindow);
   registerGitIpc(git, getWindow);

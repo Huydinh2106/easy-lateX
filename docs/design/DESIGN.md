@@ -233,6 +233,10 @@ missing compiler image is reported with the exact local build command.
   never upload over the network or overwrite an existing path.
 - Folder imports preserve their tree, reject symbolic links and internal folder
   names, and enforce bounded file-count and size limits.
+- Dropping local files or folders copies them into the highlighted directory;
+  dragging an explorer row moves it within the project without overwriting.
+- Right-clicking any row opens a compact Rename/Delete menu. Rename stays inline,
+  while deletion requires explicit confirmation and updates the root document.
 
 The explorer shows implementation structure because source editing is the MVP,
 but it remains visually quieter than the active document.

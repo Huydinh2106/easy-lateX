@@ -60,6 +60,22 @@ describe("FileManager", () => {
     await expect(files.createDirectory(".easy-latex/private")).rejects.toThrow(/internal folder/i);
   });
 
+  it("moves, renames, and deletes project files and folders safely", async () => {
+    await files.createDirectory("chapters");
+    await files.createDirectory("archive");
+    await files.createFile("chapters/draft.tex");
+
+    expect((await files.movePath("chapters/draft.tex", "archive/introduction.tex")).paths).toEqual(["archive/introduction.tex"]);
+    expect((await files.read("archive/introduction.tex")).content).toBe("");
+    await expect(files.read("chapters/draft.tex")).rejects.toThrow();
+    await expect(files.movePath("archive", "archive/nested/archive")).rejects.toThrow(/into itself/i);
+    await expect(files.movePath("archive/introduction.tex", "chapters")).rejects.toThrow(/already exists|folder/i);
+
+    expect((await files.removePath("archive")).paths).toEqual(["archive"]);
+    expect((await files.list()).map((entry) => entry.path)).toEqual(["chapters"]);
+    await expect(files.removePath(".easy-latex/build")).rejects.toThrow(/internal folder/i);
+  });
+
   it("imports regular files and folder trees while rejecting symbolic links", async () => {
     const source = await mkdtemp(path.join(os.tmpdir(), "easy-latex-import-"));
     try {
@@ -74,6 +90,12 @@ describe("FileManager", () => {
       expect((await files.read("references.bib")).content).toContain("Sample");
       expect((await files.list()).map((entry) => entry.path)).toContain("assets/figures/diagram.svg");
       await expect(files.importFiles([path.join(source, "references.bib")], "")).rejects.toThrow(/already exists/i);
+
+      await writeFile(path.join(source, "notes.txt"), "notes");
+      const tables = path.join(source, "tables");
+      await mkdir(tables);
+      await writeFile(path.join(tables, "results.csv"), "value\n1");
+      expect((await files.importDroppedItems([path.join(source, "notes.txt"), tables], "assets")).paths).toEqual(["assets/notes.txt", "assets/tables"]);
 
       const unsafe = path.join(source, "unsafe");
       await mkdir(unsafe);

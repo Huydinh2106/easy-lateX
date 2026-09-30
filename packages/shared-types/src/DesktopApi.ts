@@ -1,5 +1,5 @@
 import type { CompileEvent, CompileOptions, CompileResult } from "./CompileResult";
-import type { FileChangeEvent, FileContent, FileEntry, FileMutationResult, WriteFileInput, WriteFileResult } from "./FileEntry";
+import type { FileChangeEvent, FileContent, FileEntry, FileMutationResult, MoveFileInput, WriteFileInput, WriteFileResult } from "./FileEntry";
 import type { OpenProjectResult, Project, RecentProject } from "./Project";
 import type { AppSettingKey, AppSettings, UserSettingKey } from "./Settings";
 
@@ -47,8 +47,12 @@ export interface DesktopApi {
     write(input: WriteFileInput): Promise<WriteFileResult>;
     create(path: string): Promise<WriteFileResult>;
     createDirectory(path: string): Promise<FileMutationResult>;
+    move(input: MoveFileInput): Promise<FileMutationResult>;
+    remove(path: string): Promise<FileMutationResult>;
     importFiles(destinationDirectory: string): Promise<FileMutationResult>;
     importFolder(destinationDirectory: string): Promise<FileMutationResult>;
+    importDropped(sourcePaths: string[], destinationDirectory: string): Promise<FileMutationResult>;
+    pathForDroppedFile(file: File): string;
     onChanged(callback: (event: FileChangeEvent) => void): () => void;
   };
   compiler: {

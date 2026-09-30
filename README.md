@@ -34,7 +34,9 @@ shown in the creation dialog and can be changed with the native folder picker.
 
 The project explorer can create files and folders or copy selected files and
 complete folder trees into the active project. Imported content stays local,
-existing paths are never overwritten, and symbolic links are rejected.
+existing paths are never overwritten, and symbolic links are rejected. Files
+and folders can also be dropped from Finder, moved between project folders by
+dragging, and renamed or deleted from the right-click menu.
 
 ## Development
 

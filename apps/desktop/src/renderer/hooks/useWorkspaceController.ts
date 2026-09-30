@@ -30,6 +30,15 @@ function readableError(caught: unknown, fallback: string): string {
   return caught.message.replace(/^Error invoking remote method '[^']+': Error: /, "");
 }
 
+function isSameOrDescendant(value: string, ancestor: string): boolean {
+  return value === ancestor || value.startsWith(`${ancestor}/`);
+}
+
+function remapDescendantPath(value: string, source: string, target: string): string {
+  if (value === source) return target;
+  return value.startsWith(`${source}/`) ? `${target}${value.slice(source.length)}` : value;
+}
+
 export interface JumpTarget {
   path: string;
   line: number;
@@ -321,6 +330,60 @@ export function useWorkspaceController() {
     }
   }, [refreshFiles]);
 
+  const movePath = useCallback(async (sourcePath: string, targetPath: string): Promise<string | null> => {
+    const currentFile = activeFileRef.current;
+    const movesActiveFile = Boolean(currentFile && isSameOrDescendant(currentFile.path, sourcePath));
+    if (movesActiveFile && dirtyRef.current && !await save()) return null;
+    setError(null);
+    try {
+      const result = await window.desktop.file.move({ sourcePath, targetPath });
+      const movedPath = result.paths[0] ?? targetPath;
+      const [currentProject] = await Promise.all([window.desktop.project.current(), refreshFiles()]);
+      if (currentProject) setProjectResult(currentProject);
+      if (currentFile && movesActiveFile) {
+        const nextActivePath = remapDescendantPath(currentFile.path, sourcePath, movedPath);
+        if (EDITABLE_FILE_PATTERN.test(nextActivePath)) await loadFile(nextActivePath);
+        else {
+          loadingSequence.current += 1;
+          activeFileRef.current = null;
+          contentRef.current = "";
+          dirtyRef.current = false;
+          setActiveFile(null);
+          setContent("");
+          setSaveState("saved");
+        }
+      }
+      return movedPath;
+    } catch (caught) {
+      setError(readableError(caught, "Could not move or rename the item"));
+      return null;
+    }
+  }, [loadFile, refreshFiles, save]);
+
+  const removePath = useCallback(async (relativePath: string): Promise<boolean> => {
+    const currentFile = activeFileRef.current;
+    const removesActiveFile = Boolean(currentFile && isSameOrDescendant(currentFile.path, relativePath));
+    setError(null);
+    try {
+      await window.desktop.file.remove(relativePath);
+      if (removesActiveFile) {
+        loadingSequence.current += 1;
+        activeFileRef.current = null;
+        contentRef.current = "";
+        dirtyRef.current = false;
+        setActiveFile(null);
+        setContent("");
+        setSaveState("saved");
+      }
+      const [currentProject] = await Promise.all([window.desktop.project.current(), refreshFiles()]);
+      if (currentProject) setProjectResult(currentProject);
+      return true;
+    } catch (caught) {
+      setError(readableError(caught, "Could not delete the item"));
+      return false;
+    }
+  }, [refreshFiles]);
+
   const importFiles = useCallback(async (destinationDirectory: string): Promise<string[]> => {
     setError(null);
     try {
@@ -341,6 +404,20 @@ export function useWorkspaceController() {
       return result.paths;
     } catch (caught) {
       setError(readableError(caught, "Could not add the selected folder"));
+      return [];
+    }
+  }, [refreshFiles]);
+
+  const importDropped = useCallback(async (droppedFiles: File[], destinationDirectory: string): Promise<string[]> => {
+    setError(null);
+    try {
+      const sourcePaths = [...new Set(droppedFiles.map((file) => window.desktop.file.pathForDroppedFile(file)).filter(Boolean))];
+      if (sourcePaths.length === 0) return [];
+      const result = await window.desktop.file.importDropped(sourcePaths, destinationDirectory);
+      if (result.paths.length > 0) await refreshFiles();
+      return result.paths;
+    } catch (caught) {
+      setError(readableError(caught, "Could not add the dropped files or folders"));
       return [];
     }
   }, [refreshFiles]);
@@ -387,8 +464,11 @@ export function useWorkspaceController() {
     openFile,
     createFile,
     createDirectory,
+    movePath,
+    removePath,
     importFiles,
     importFolder,
+    importDropped,
     save,
     changeContent,
     compile,

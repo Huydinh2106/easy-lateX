@@ -152,12 +152,45 @@ export class FileManager {
     return { paths: [relative] };
   }
 
+  async movePath(sourcePath: string, targetPath: string): Promise<FileMutationResult> {
+    const sourceRelative = this.normalizeRelativePath(sourcePath);
+    const targetRelative = this.normalizeRelativePath(targetPath);
+    this.assertUserMutablePath(sourceRelative);
+    this.assertUserMutablePath(targetRelative);
+    if (sourceRelative === targetRelative) return { paths: [targetRelative] };
+
+    const source = await this.resolveExistingEntry(sourceRelative);
+    if (source.kind === "directory" && targetRelative.startsWith(`${sourceRelative}/`)) {
+      throw new Error("A folder cannot be moved into itself");
+    }
+    const target = await this.resolveNewPath(targetRelative);
+    await this.assertMissing(target, targetRelative);
+    if (source.kind === "directory") {
+      const targetParent = await realpath(path.dirname(target));
+      if (this.isInside(source.absolute, targetParent)) throw new Error("A folder cannot be moved into itself");
+    }
+    await rename(source.absolute, target);
+    return { paths: [targetRelative] };
+  }
+
+  async removePath(relativePath: string): Promise<FileMutationResult> {
+    const relative = this.normalizeRelativePath(relativePath);
+    this.assertUserMutablePath(relative);
+    const entry = await this.resolveExistingEntry(relative);
+    await rm(entry.absolute, { recursive: entry.kind === "directory", force: false });
+    return { paths: [relative] };
+  }
+
   importFiles(sourcePaths: string[], destinationDirectory: string): Promise<FileMutationResult> {
     return this.importItems(sourcePaths, destinationDirectory, "file");
   }
 
   importFolders(sourcePaths: string[], destinationDirectory: string): Promise<FileMutationResult> {
     return this.importItems(sourcePaths, destinationDirectory, "directory");
+  }
+
+  importDroppedItems(sourcePaths: string[], destinationDirectory: string): Promise<FileMutationResult> {
+    return this.importItems(sourcePaths, destinationDirectory);
   }
 
   async resolveExistingFile(relativePath: string): Promise<string> {
@@ -200,7 +233,7 @@ export class FileManager {
   private async importItems(
     sourcePaths: string[],
     destinationDirectory: string,
-    expectedKind: "file" | "directory"
+    expectedKind?: "file" | "directory"
   ): Promise<FileMutationResult> {
     const destinationRelative = this.normalizeDirectoryPath(destinationDirectory);
     const destination = await this.resolveExistingDirectory(destinationRelative);
@@ -303,6 +336,18 @@ export class FileManager {
     const canonical = await realpath(candidate);
     this.assertInsideWorkspace(canonical);
     return canonical;
+  }
+
+  private async resolveExistingEntry(relative: string): Promise<{ absolute: string; kind: "file" | "directory" }> {
+    const candidate = path.resolve(this.getWorkspaceRoot(), ...relative.split("/"));
+    this.assertLexicallyInsideWorkspace(candidate);
+    const info = await lstat(candidate);
+    if (info.isSymbolicLink() || (!info.isFile() && !info.isDirectory())) {
+      throw new Error("The requested path is not a regular file or folder");
+    }
+    const canonical = await realpath(candidate);
+    this.assertInsideWorkspace(canonical);
+    return { absolute: canonical, kind: info.isDirectory() ? "directory" : "file" };
   }
 
   private async resolveNewPath(relative: string): Promise<string> {

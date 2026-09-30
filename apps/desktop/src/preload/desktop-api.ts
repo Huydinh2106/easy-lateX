@@ -1,4 +1,4 @@
-import { ipcRenderer } from "electron";
+import { ipcRenderer, webUtils } from "electron";
 import type { CompileEvent, CompileOptions, DesktopApi, FileChangeEvent } from "@easy-latex/shared-types";
 
 const channels = {
@@ -15,8 +15,11 @@ const channels = {
   fileWrite: "file:write",
   fileCreate: "file:create",
   fileCreateDirectory: "file:create-directory",
+  fileMove: "file:move",
+  fileRemove: "file:remove",
   fileImportFiles: "file:import-files",
   fileImportFolder: "file:import-folder",
+  fileImportDropped: "file:import-dropped",
   fileChanged: "file:changed",
   compilerBuild: "compiler:build",
   compilerCancel: "compiler:cancel",
@@ -46,8 +49,12 @@ export const desktopApi: DesktopApi = {
     write: (input) => ipcRenderer.invoke(channels.fileWrite, input),
     create: (path) => ipcRenderer.invoke(channels.fileCreate, path),
     createDirectory: (path) => ipcRenderer.invoke(channels.fileCreateDirectory, path),
+    move: (input) => ipcRenderer.invoke(channels.fileMove, input),
+    remove: (path) => ipcRenderer.invoke(channels.fileRemove, path),
     importFiles: (destinationDirectory) => ipcRenderer.invoke(channels.fileImportFiles, destinationDirectory),
     importFolder: (destinationDirectory) => ipcRenderer.invoke(channels.fileImportFolder, destinationDirectory),
+    importDropped: (sourcePaths, destinationDirectory) => ipcRenderer.invoke(channels.fileImportDropped, { sourcePaths, destinationDirectory }),
+    pathForDroppedFile: (file) => webUtils.getPathForFile(file),
     onChanged(callback) {
       const listener = (_event: Electron.IpcRendererEvent, value: FileChangeEvent): void => callback(value);
       ipcRenderer.on(channels.fileChanged, listener);

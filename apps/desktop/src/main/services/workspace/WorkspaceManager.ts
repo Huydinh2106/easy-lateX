@@ -2,7 +2,7 @@ import { mkdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/
 import path from "node:path";
 import { dialog, type BrowserWindow } from "electron";
 import { findRootCandidates } from "@easy-latex/latex";
-import type { OpenProjectResult, Project, RecentProject } from "@easy-latex/shared-types";
+import type { FileMutationResult, OpenProjectResult, Project, RecentProject } from "@easy-latex/shared-types";
 import type { FileManager } from "../filesystem/FileManager";
 import type { FileWatcher } from "../filesystem/FileWatcher";
 import type { SettingsManager } from "../settings/SettingsManager";
@@ -186,6 +186,27 @@ export class WorkspaceManager {
     return structuredClone(project);
   }
 
+  async movePath(sourcePath: string, targetPath: string): Promise<FileMutationResult> {
+    if (!this.currentProject) throw new Error("Open a project folder first");
+    const source = this.files.normalizeRelativePath(sourcePath);
+    const target = this.files.normalizeRelativePath(targetPath);
+    const currentRoot = this.currentProject.project.rootDocument;
+    const preferredRoot = currentRoot ? this.remapDescendantPath(currentRoot, source, target) : undefined;
+    const result = await this.files.movePath(source, target);
+    await this.refreshProjectFiles(preferredRoot);
+    return result;
+  }
+
+  async removePath(relativePath: string): Promise<FileMutationResult> {
+    if (!this.currentProject) throw new Error("Open a project folder first");
+    const relative = this.files.normalizeRelativePath(relativePath);
+    const currentRoot = this.currentProject.project.rootDocument;
+    const preferredRoot = currentRoot && !this.isSameOrDescendant(currentRoot, relative) ? currentRoot : undefined;
+    const result = await this.files.removePath(relative);
+    await this.refreshProjectFiles(preferredRoot);
+    return result;
+  }
+
   requireRootDocument(override?: string): string {
     if (!this.currentProject) throw new Error("Open a project folder first");
     const candidate = override ?? this.currentProject.project.rootDocument;
@@ -205,6 +226,34 @@ export class WorkspaceManager {
       }
     }));
     return findRootCandidates(sources.filter((source): source is { path: string; content: string } => source !== null));
+  }
+
+  private async refreshProjectFiles(preferredRoot?: string): Promise<void> {
+    if (!this.currentProject) throw new Error("Open a project folder first");
+    const discovered = await this.discoverRootCandidates();
+    const preferredExists = preferredRoot
+      ? preferredRoot.toLowerCase().endsWith(".tex") && await this.files.resolveExistingFile(preferredRoot).then(() => true).catch(() => false)
+      : false;
+    const rootDocument = preferredExists ? preferredRoot : discovered[0];
+    const project: Project = {
+      name: this.currentProject.project.name,
+      workspacePath: this.currentProject.project.workspacePath,
+      ...(rootDocument ? { rootDocument } : {})
+    };
+    this.currentProject = {
+      project,
+      rootCandidates: rootDocument && !discovered.includes(rootDocument) ? [rootDocument, ...discovered] : discovered
+    };
+    await this.writeMetadata(rootDocument ? { rootDocument } : {});
+  }
+
+  private remapDescendantPath(value: string, source: string, target: string): string {
+    if (value === source) return target;
+    return value.startsWith(`${source}/`) ? `${target}${value.slice(source.length)}` : value;
+  }
+
+  private isSameOrDescendant(value: string, ancestor: string): boolean {
+    return value === ancestor || value.startsWith(`${ancestor}/`);
   }
 
   private async readMetadata(): Promise<ProjectMetadata> {

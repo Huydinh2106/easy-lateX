@@ -1,5 +1,5 @@
 import type { IpcMainInvokeEvent, WebContents } from "electron";
-import type { AppSettingKey, AppSettings, CompileOptions, SyncTeXForwardInput, SyncTeXInverseInput, UserSettingKey, WriteFileInput } from "@easy-latex/shared-types";
+import type { AppSettingKey, AppSettings, CompileOptions, MoveFileInput, SyncTeXForwardInput, SyncTeXInverseInput, UserSettingKey, WriteFileInput } from "@easy-latex/shared-types";
 
 export function assertTrustedSender(event: IpcMainInvokeEvent, trusted: WebContents | null): void {
   if (!trusted || event.sender.id !== trusted.id || event.senderFrame !== trusted.mainFrame) {
@@ -28,6 +28,28 @@ export function parseWriteFileInput(value: unknown): WriteFileInput {
     content: input.content,
     ...(typeof input.expectedModifiedAt === "number" ? { expectedModifiedAt: input.expectedModifiedAt } : {})
   };
+}
+
+export function parseMoveFileInput(value: unknown): MoveFileInput {
+  if (!value || typeof value !== "object") throw new Error("Invalid file move request");
+  const input = value as Record<string, unknown>;
+  return {
+    sourcePath: assertString(input.sourcePath, "Source path"),
+    targetPath: assertString(input.targetPath, "Target path")
+  };
+}
+
+export function parseDroppedFileInput(value: unknown): { sourcePaths: string[]; destinationDirectory: string } {
+  if (!value || typeof value !== "object") throw new Error("Invalid dropped file request");
+  const input = value as Record<string, unknown>;
+  if (!Array.isArray(input.sourcePaths) || input.sourcePaths.length === 0 || input.sourcePaths.length > 1000) {
+    throw new Error("Dropped files must contain between 1 and 1000 items");
+  }
+  const sourcePaths = input.sourcePaths.map((sourcePath) => assertString(sourcePath, "Dropped file path", 32_768));
+  const destinationDirectory = input.destinationDirectory === ""
+    ? ""
+    : assertString(input.destinationDirectory, "Destination folder");
+  return { sourcePaths, destinationDirectory };
 }
 
 export function parseCompileOptions(value: unknown): CompileOptions {
