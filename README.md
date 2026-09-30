@@ -38,6 +38,10 @@ existing paths are never overwritten, and symbolic links are rejected. Files
 and folders can also be dropped from Finder, moved between project folders by
 dragging, and renamed or deleted from the right-click menu.
 
+For the active `.tex` file, the resizable File outline panel tracks parts,
+chapters, sections, and nested subsections while you type. Selecting an entry
+jumps directly to its source line in the editor.
+
 ## Development
 
 ```bash

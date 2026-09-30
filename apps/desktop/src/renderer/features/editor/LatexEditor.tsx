@@ -22,18 +22,21 @@ interface LatexEditorProps {
   diagnostics: Diagnostic[];
   onChange(value: string): void;
   onSave(): void;
+  onCursorLineChange?(line: number): void;
 }
 
 export const LatexEditor = forwardRef<LatexEditorHandle, LatexEditorProps>(function LatexEditor(
-  { value, path, diagnostics, onChange, onSave },
+  { value, path, diagnostics, onChange, onSave, onCursorLineChange },
   forwardedRef
 ) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const onChangeRef = useRef(onChange);
   const onSaveRef = useRef(onSave);
+  const onCursorLineChangeRef = useRef(onCursorLineChange);
   onChangeRef.current = onChange;
   onSaveRef.current = onSave;
+  onCursorLineChangeRef.current = onCursorLineChange;
 
   useImperativeHandle(forwardedRef, () => ({
     jumpTo(line, column = 1) {
@@ -66,11 +69,15 @@ export const LatexEditor = forwardRef<LatexEditorHandle, LatexEditorProps>(funct
           if (update.docChanged && !update.transactions.some((transaction) => transaction.annotation(externalUpdate))) {
             onChangeRef.current(update.state.doc.toString());
           }
+          if (update.selectionSet || update.docChanged) {
+            onCursorLineChangeRef.current?.(update.state.doc.lineAt(update.state.selection.main.head).number);
+          }
         })
       ]
     });
     const view = new EditorView({ state, parent: hostRef.current });
     viewRef.current = view;
+    onCursorLineChangeRef.current?.(view.state.doc.lineAt(view.state.selection.main.head).number);
     return () => {
       view.destroy();
       viewRef.current = null;

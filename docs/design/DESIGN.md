@@ -237,6 +237,9 @@ missing compiler image is reported with the exact local build command.
   dragging an explorer row moves it within the project without overwriting.
 - Right-clicking any row opens a compact Rename/Delete menu. Rename stays inline,
   while deletion requires explicit confirmation and updates the root document.
+- A resizable `File outline` panel sits below the project tree. It parses the
+  active `.tex` buffer live, presents heading levels as collapsible hierarchy,
+  and navigates the editor to the selected source line without saving first.
 
 The explorer shows implementation structure because source editing is the MVP,
 but it remains visually quieter than the active document.

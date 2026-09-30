@@ -15,7 +15,9 @@ import {
   X
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { OutlineItem } from "@easy-latex/latex";
 import type { FileEntry } from "@easy-latex/shared-types";
+import { FileOutline } from "./FileOutline";
 
 type CreateKind = "file" | "folder";
 
@@ -23,6 +25,9 @@ interface ProjectExplorerProps {
   files: FileEntry[];
   selectedPath?: string | undefined;
   rootDocument?: string | undefined;
+  outlineFilePath?: string | undefined;
+  outlineItems: OutlineItem[];
+  outlineActiveLine?: number | undefined;
   onOpen(path: string): void;
   onCreateFile(path: string): Promise<string | null>;
   onCreateDirectory(path: string): Promise<string | null>;
@@ -31,6 +36,7 @@ interface ProjectExplorerProps {
   onImportFiles(destinationDirectory: string): Promise<string[]>;
   onImportFolder(destinationDirectory: string): Promise<string[]>;
   onImportDropped(files: File[], destinationDirectory: string): Promise<string[]>;
+  onSelectOutline(item: OutlineItem): void;
 }
 
 interface ContextMenuState {
@@ -85,6 +91,8 @@ export function ProjectExplorer(props: ProjectExplorerProps) {
   const [dragSource, setDragSource] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<DropTarget | null>(null);
   const [busy, setBusy] = useState(false);
+  const [outlineHeight, setOutlineHeight] = useState(260);
+  const explorerRef = useRef<HTMLElement>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
   const visibleFiles = useMemo(() => props.files.filter((entry) => {
     if (!entry.parentPath) return true;
@@ -249,7 +257,8 @@ export function ProjectExplorer(props: ProjectExplorerProps) {
   const destinationLabel = destinationDirectory || "Project root";
 
   return (
-    <aside className="project-explorer" aria-label="Project files">
+    <aside ref={explorerRef} className="project-explorer" aria-label="Project files">
+      <section className="project-files-panel" aria-label="Project file tree">
       <header className="explorer-heading">
         <div className="explorer-heading-main">
           <span>Project</span>
@@ -345,6 +354,19 @@ export function ProjectExplorer(props: ProjectExplorerProps) {
           );
         })}
       </nav>
+      </section>
+
+      <FileOutline
+        filePath={props.outlineFilePath}
+        items={props.outlineItems}
+        activeLine={props.outlineActiveLine}
+        height={outlineHeight}
+        onHeightChange={(height) => {
+          const maximum = Math.max(120, (explorerRef.current?.clientHeight ?? 640) - 150);
+          setOutlineHeight(Math.max(120, Math.min(maximum, height)));
+        }}
+        onSelect={props.onSelectOutline}
+      />
 
       {contextMenu ? (
         <div ref={contextMenuRef} className="explorer-context-menu" role="menu" style={{ left: contextMenu.x, top: contextMenu.y }}>

@@ -1,5 +1,6 @@
 import { CircleAlert, FileText, X } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { parseOutline } from "@easy-latex/latex";
 import { StatusBar } from "./components/StatusBar";
 import { CompileToolbar } from "./features/compile/CompileToolbar";
 import { ProjectDashboard } from "./features/dashboard/ProjectDashboard";
@@ -12,11 +13,19 @@ import { useWorkspaceController } from "./hooks/useWorkspaceController";
 export function App() {
   const workspace = useWorkspaceController();
   const editorRef = useRef<LatexEditorHandle>(null);
+  const [cursorLine, setCursorLine] = useState(1);
 
   useEffect(() => {
     const target = workspace.jumpTarget;
     if (target && target.path === workspace.activeFile?.path) editorRef.current?.jumpTo(target.line, target.column);
   }, [workspace.activeFile?.path, workspace.jumpTarget]);
+
+  useEffect(() => setCursorLine(1), [workspace.activeFile?.path]);
+
+  const outlineItems = useMemo(() => {
+    const activePath = workspace.activeFile?.path;
+    return activePath?.toLowerCase().endsWith(".tex") ? parseOutline(workspace.content, activePath) : [];
+  }, [workspace.activeFile?.path, workspace.content]);
 
   if (!workspace.projectResult) {
     return (
@@ -65,6 +74,9 @@ export function App() {
           files={workspace.files}
           selectedPath={workspace.activeFile?.path}
           rootDocument={project.rootDocument}
+          outlineFilePath={workspace.activeFile?.path}
+          outlineItems={outlineItems}
+          outlineActiveLine={cursorLine}
           onOpen={(path) => void workspace.openFile(path)}
           onCreateFile={workspace.createFile}
           onCreateDirectory={workspace.createDirectory}
@@ -73,6 +85,7 @@ export function App() {
           onImportFiles={workspace.importFiles}
           onImportFolder={workspace.importFolder}
           onImportDropped={workspace.importDropped}
+          onSelectOutline={(item) => editorRef.current?.jumpTo(item.line, item.column)}
         />
 
         <main className="editor-workspace">
@@ -90,6 +103,7 @@ export function App() {
                   diagnostics={workspace.diagnostics}
                   onChange={workspace.changeContent}
                   onSave={() => void workspace.save()}
+                  onCursorLineChange={setCursorLine}
                 />
               ) : (
                 <div className="editor-empty"><FileText /><strong>Select a text file</strong><span>Choose a LaTeX source from the project explorer.</span></div>

@@ -374,6 +374,7 @@
 .workspace-layout { position: relative; display: grid; min-width: 0; min-height: 0; grid-template-columns: var(--explorer-width) minmax(420px, 1fr); }
 .pdf-visible .workspace-layout { grid-template-columns: var(--explorer-width) minmax(420px, 1fr) minmax(360px, var(--pdf-width)); }
 .project-explorer { display: flex; min-width: 0; min-height: 0; flex-direction: column; overflow: hidden; background: var(--color-bg-subtle); border-right: 1px solid var(--color-border-default); }
+.project-files-panel { display: flex; min-width: 0; min-height: 150px; flex: 1 1 auto; flex-direction: column; overflow: hidden; }
 .panel-heading, .editor-header, .pdf-toolbar { display: flex; height: 40px; align-items: center; justify-content: space-between; padding: 0 var(--space-3); border-bottom: 1px solid var(--color-border-subtle); }
 .panel-heading { color: var(--color-text-secondary); font-size: 12px; font-weight: 600; }
 .panel-heading small { color: var(--color-text-disabled); font-weight: 400; }
@@ -417,6 +418,27 @@
 .explorer-context-menu button:hover, .explorer-context-menu button:focus-visible { background: var(--color-bg-hover); outline: 0; }
 .explorer-context-menu button.context-danger { color: var(--color-danger); }
 .explorer-context-menu svg { width: 14px; height: 14px; }
+.file-outline-panel { display: flex; min-width: 0; min-height: 120px; flex: 0 0 260px; flex-direction: column; overflow: hidden; background: var(--color-bg-subtle); border-top: 1px solid var(--color-border-default); }
+.file-outline-collapsed { min-height: 36px; }
+.file-outline-resizer { position: relative; height: 5px; flex: 0 0 5px; margin-top: -3px; cursor: row-resize; outline: 0; }
+.file-outline-resizer::after { position: absolute; top: 2px; right: 0; left: 0; height: 1px; background: var(--color-border-default); content: ""; }
+.file-outline-resizer:hover::after, .file-outline-resizer:focus-visible::after { height: 2px; background: var(--color-accent); }
+.file-outline-heading { display: grid; width: 100%; height: 35px; flex: 0 0 35px; grid-template-columns: 16px 16px minmax(0, 1fr) auto; align-items: center; gap: 6px; padding: 0 9px; color: var(--color-text-secondary); background: transparent; border: 0; text-align: left; }
+.file-outline-heading:hover { color: var(--color-text-primary); background: var(--color-bg-hover); }
+.file-outline-heading svg { width: 14px; height: 14px; }
+.file-outline-heading span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 600; }
+.file-outline-heading small { color: var(--color-text-disabled); font-size: 10px; font-weight: 400; }
+.file-outline-tree { min-height: 0; flex: 1; padding: 2px var(--space-2) var(--space-2); overflow: auto; }
+.outline-row { display: flex; width: 100%; height: 30px; align-items: center; overflow: hidden; border-radius: var(--radius-control); }
+.outline-row:hover { background: var(--color-bg-hover); }
+.outline-row-selected { color: var(--color-accent); background: var(--color-accent-soft); }
+.outline-toggle { display: grid; width: 20px; height: 30px; flex: 0 0 20px; padding: 0; place-items: center; color: var(--color-text-muted); background: transparent; border: 0; }
+.outline-toggle svg { width: 13px; height: 13px; }
+.outline-spacer { width: 20px; flex: 0 0 20px; }
+.outline-item { display: flex; min-width: 0; height: 30px; flex: 1; align-items: center; gap: 6px; padding: 0 7px 0 1px; color: inherit; background: transparent; border: 0; text-align: left; }
+.outline-item span { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.outline-item small { color: var(--color-text-disabled); font: 9px var(--font-mono); }
+.outline-empty { margin: 0; padding: 12px 8px; color: var(--color-text-muted); font-size: 11px; line-height: 17px; }
 
 .editor-workspace { display: grid; min-width: 0; min-height: 0; grid-template-rows: minmax(0, 1fr) auto; background: var(--color-bg-surface); }
 .editor-panel { display: grid; min-width: 0; min-height: 0; grid-template-rows: 40px minmax(0, 1fr); }

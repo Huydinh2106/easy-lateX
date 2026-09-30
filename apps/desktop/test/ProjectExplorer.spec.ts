@@ -16,6 +16,8 @@ function setup() {
     files,
     selectedPath: "main.tex",
     rootDocument: "main.tex",
+    outlineFilePath: "main.tex",
+    outlineItems: [],
     onOpen: vi.fn(),
     onCreateFile: vi.fn(() => Promise.resolve(null)),
     onCreateDirectory: vi.fn(() => Promise.resolve(null)),
@@ -23,7 +25,8 @@ function setup() {
     onRemove: vi.fn(() => Promise.resolve(true)),
     onImportFiles: vi.fn(() => Promise.resolve([] as string[])),
     onImportFolder: vi.fn(() => Promise.resolve([] as string[])),
-    onImportDropped: vi.fn(() => Promise.resolve([] as string[]))
+    onImportDropped: vi.fn(() => Promise.resolve([] as string[])),
+    onSelectOutline: vi.fn()
   };
   render(React.createElement(ProjectExplorer, props));
   return props;
