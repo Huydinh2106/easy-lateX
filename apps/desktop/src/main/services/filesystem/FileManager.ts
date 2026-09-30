@@ -1,12 +1,24 @@
-import { chmod, lstat, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { chmod, copyFile, lstat, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { FileContent, FileEntry, WriteFileInput, WriteFileResult } from "@easy-latex/shared-types";
+import type { FileContent, FileEntry, FileMutationResult, WriteFileInput, WriteFileResult } from "@easy-latex/shared-types";
 
 const MAX_TEXT_FILE_BYTES = 10 * 1024 * 1024;
 const MAX_TREE_ENTRIES = 20_000;
+const MAX_IMPORT_ENTRIES = 20_000;
+const MAX_IMPORT_FILE_BYTES = 250 * 1024 * 1024;
+const MAX_IMPORT_TOTAL_BYTES = 1024 * 1024 * 1024;
 const IGNORED_DIRECTORIES = new Set([".git", "node_modules"]);
+const PROTECTED_DIRECTORIES = new Set([".easy-latex", ".git", "node_modules"]);
 const IGNORED_BUILD_EXTENSIONS = new Set([".aux", ".bbl", ".bcf", ".blg", ".fdb_latexmk", ".fls", ".log", ".out", ".run.xml", ".synctex.gz"]);
 const EDITABLE_EXTENSIONS = new Set([".tex", ".bib", ".sty", ".cls", ".bst", ".ltx", ".md", ".txt"]);
+const WINDOWS_RESERVED_NAMES = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i;
+
+interface ImportPlan {
+  source: string;
+  target: string;
+  relativePath: string;
+}
 
 export class FileConflictError extends Error {
   constructor(message: string) {
@@ -115,6 +127,39 @@ export class FileManager {
     return { path: relative, modifiedAt: after.mtimeMs, size: after.size };
   }
 
+  async createFile(relativePath: string): Promise<WriteFileResult> {
+    const relative = this.normalizeRelativePath(relativePath);
+    this.assertUserMutablePath(relative);
+    const absolute = await this.resolveNewPath(relative);
+    try {
+      await writeFile(absolute, "", { encoding: "utf8", flag: "wx", mode: 0o644 });
+    } catch (error) {
+      this.rethrowCreationError(error, relative);
+    }
+    const info = await stat(absolute);
+    return { path: relative, modifiedAt: info.mtimeMs, size: info.size };
+  }
+
+  async createDirectory(relativePath: string): Promise<FileMutationResult> {
+    const relative = this.normalizeRelativePath(relativePath);
+    this.assertUserMutablePath(relative);
+    const absolute = await this.resolveNewPath(relative);
+    try {
+      await mkdir(absolute, { mode: 0o755 });
+    } catch (error) {
+      this.rethrowCreationError(error, relative);
+    }
+    return { paths: [relative] };
+  }
+
+  importFiles(sourcePaths: string[], destinationDirectory: string): Promise<FileMutationResult> {
+    return this.importItems(sourcePaths, destinationDirectory, "file");
+  }
+
+  importFolders(sourcePaths: string[], destinationDirectory: string): Promise<FileMutationResult> {
+    return this.importItems(sourcePaths, destinationDirectory, "directory");
+  }
+
   async resolveExistingFile(relativePath: string): Promise<string> {
     const relative = this.normalizeRelativePath(relativePath);
     const candidate = path.resolve(this.getWorkspaceRoot(), ...relative.split("/"));
@@ -150,6 +195,154 @@ export class FileManager {
       throw new Error("Path contains an invalid segment");
     }
     return normalized;
+  }
+
+  private async importItems(
+    sourcePaths: string[],
+    destinationDirectory: string,
+    expectedKind: "file" | "directory"
+  ): Promise<FileMutationResult> {
+    const destinationRelative = this.normalizeDirectoryPath(destinationDirectory);
+    const destination = await this.resolveExistingDirectory(destinationRelative);
+    const plans: ImportPlan[] = [];
+    const targetKeys = new Set<string>();
+    let totalEntries = 0;
+    let totalBytes = 0;
+
+    for (const selectedPath of sourcePaths) {
+      const selectedInfo = await lstat(selectedPath);
+      if (selectedInfo.isSymbolicLink()) throw new Error("Symbolic links cannot be imported into a project");
+      if (expectedKind === "file" && !selectedInfo.isFile()) throw new Error("The selected item is not a regular file");
+      if (expectedKind === "directory" && !selectedInfo.isDirectory()) throw new Error("The selected item is not a folder");
+      const source = await realpath(selectedPath);
+      const name = path.basename(source);
+      const relativePath = destinationRelative ? `${destinationRelative}/${name}` : name;
+      const relative = this.normalizeRelativePath(relativePath);
+      this.assertUserMutablePath(relative);
+      const target = path.join(destination, name);
+      const key = process.platform === "win32" ? target.toLowerCase() : target;
+      if (targetKeys.has(key)) throw new Error(`More than one selected item is named "${name}"`);
+      targetKeys.add(key);
+      await this.assertMissing(target, relative);
+      if (selectedInfo.isDirectory() && this.isInside(source, destination)) {
+        throw new Error("A folder cannot be imported into itself");
+      }
+      const measured = await this.validateImportTree(source, relative);
+      totalEntries += measured.entries;
+      totalBytes += measured.bytes;
+      if (totalEntries > MAX_IMPORT_ENTRIES) throw new Error("The selected import contains too many files");
+      if (totalBytes > MAX_IMPORT_TOTAL_BYTES) throw new Error("The selected import is larger than 1 GB");
+      plans.push({ source, target, relativePath: relative });
+    }
+
+    const created: string[] = [];
+    try {
+      for (const plan of plans) {
+        created.push(plan.target);
+        await this.copyImportTree(plan.source, plan.target);
+      }
+    } catch (error) {
+      await Promise.all(created.map((target) => rm(target, { recursive: true, force: true }).catch(() => undefined)));
+      throw error;
+    }
+    return { paths: plans.map((plan) => plan.relativePath) };
+  }
+
+  private async validateImportTree(source: string, targetRelative: string): Promise<{ entries: number; bytes: number }> {
+    const pending = [{ source, targetRelative }];
+    let entries = 0;
+    let bytes = 0;
+    while (pending.length > 0) {
+      const current = pending.pop();
+      if (!current) break;
+      entries += 1;
+      if (entries > MAX_IMPORT_ENTRIES) throw new Error("The selected import contains too many files");
+      this.assertUserMutablePath(current.targetRelative);
+      const info = await lstat(current.source);
+      if (info.isSymbolicLink()) throw new Error("Folders containing symbolic links cannot be imported");
+      if (info.isDirectory()) {
+        const children = await readdir(current.source);
+        for (const child of children) {
+          pending.push({ source: path.join(current.source, child), targetRelative: `${current.targetRelative}/${child}` });
+        }
+      } else if (info.isFile()) {
+        if (info.size > MAX_IMPORT_FILE_BYTES) throw new Error(`The file "${path.basename(current.source)}" is too large to import`);
+        bytes += info.size;
+      } else {
+        throw new Error("Only regular files and folders can be imported");
+      }
+    }
+    return { entries, bytes };
+  }
+
+  private async copyImportTree(source: string, target: string): Promise<void> {
+    const info = await lstat(source);
+    if (info.isSymbolicLink()) throw new Error("Symbolic links cannot be imported into a project");
+    if (info.isDirectory()) {
+      await mkdir(target, { mode: info.mode & 0o777 });
+      const children = await readdir(source);
+      for (const child of children) await this.copyImportTree(path.join(source, child), path.join(target, child));
+      return;
+    }
+    if (!info.isFile()) throw new Error("Only regular files and folders can be imported");
+    await copyFile(source, target, constants.COPYFILE_EXCL);
+    await chmod(target, info.mode & 0o777);
+  }
+
+  private normalizeDirectoryPath(value: string): string {
+    if (value === "") return "";
+    const relative = this.normalizeRelativePath(value);
+    this.assertUserMutablePath(relative);
+    return relative;
+  }
+
+  private async resolveExistingDirectory(relative: string): Promise<string> {
+    const candidate = relative ? path.resolve(this.getWorkspaceRoot(), ...relative.split("/")) : this.getWorkspaceRoot();
+    const info = await lstat(candidate);
+    if (info.isSymbolicLink() || !info.isDirectory()) throw new Error("The destination is not a project folder");
+    const canonical = await realpath(candidate);
+    this.assertInsideWorkspace(canonical);
+    return canonical;
+  }
+
+  private async resolveNewPath(relative: string): Promise<string> {
+    const parentRelative = path.posix.dirname(relative);
+    const parent = await this.resolveExistingDirectory(parentRelative === "." ? "" : parentRelative);
+    const absolute = path.join(parent, path.posix.basename(relative));
+    this.assertLexicallyInsideWorkspace(absolute);
+    return absolute;
+  }
+
+  private assertUserMutablePath(relative: string): void {
+    for (const segment of relative.split("/")) {
+      const hasControlCharacter = [...segment].some((character) => character.charCodeAt(0) < 32);
+      if (segment.length > 255 || segment !== segment.trim() || /[<>:"|?*]/.test(segment) || hasControlCharacter || /[. ]$/.test(segment) || WINDOWS_RESERVED_NAMES.test(segment)) {
+        throw new Error(`"${segment}" cannot be used as a project file or folder name`);
+      }
+      if (PROTECTED_DIRECTORIES.has(segment.toLowerCase())) {
+        throw new Error(`The internal folder "${segment}" cannot be changed from the project explorer`);
+      }
+    }
+  }
+
+  private async assertMissing(absolute: string, relative: string): Promise<void> {
+    try {
+      await lstat(absolute);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+      throw error;
+    }
+    throw new Error(`A file or folder already exists at "${relative}"`);
+  }
+
+  private isInside(parent: string, candidate: string): boolean {
+    const relative = path.relative(parent, candidate);
+    return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+  }
+
+  private rethrowCreationError(error: unknown, relative: string): never {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") throw new Error(`A file or folder already exists at "${relative}"`);
+    throw error;
   }
 
   private assertLexicallyInsideWorkspace(candidate: string): void {

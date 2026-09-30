@@ -28,6 +28,10 @@ export interface WriteFileResult {
   size: number;
 }
 
+export interface FileMutationResult {
+  paths: string[];
+}
+
 export interface FileChangeEvent {
   path?: string;
   kind: "changed" | "renamed" | "rescan";

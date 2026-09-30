@@ -3,6 +3,8 @@ import type { CompileEvent, CompileOptions, DesktopApi, FileChangeEvent } from "
 
 const channels = {
   projectOpen: "project:open",
+  projectCreate: "project:create",
+  projectChooseProjectsDirectory: "project:choose-projects-directory",
   projectOpenRecent: "project:open-recent",
   projectRecent: "project:recent",
   projectForgetRecent: "project:forget-recent",
@@ -11,6 +13,10 @@ const channels = {
   fileList: "file:list",
   fileRead: "file:read",
   fileWrite: "file:write",
+  fileCreate: "file:create",
+  fileCreateDirectory: "file:create-directory",
+  fileImportFiles: "file:import-files",
+  fileImportFolder: "file:import-folder",
   fileChanged: "file:changed",
   compilerBuild: "compiler:build",
   compilerCancel: "compiler:cancel",
@@ -26,6 +32,8 @@ const channels = {
 export const desktopApi: DesktopApi = {
   project: {
     open: () => ipcRenderer.invoke(channels.projectOpen),
+    create: (name) => ipcRenderer.invoke(channels.projectCreate, name),
+    chooseProjectsDirectory: () => ipcRenderer.invoke(channels.projectChooseProjectsDirectory),
     openRecent: (workspacePath) => ipcRenderer.invoke(channels.projectOpenRecent, workspacePath),
     recent: () => ipcRenderer.invoke(channels.projectRecent),
     forgetRecent: (workspacePath) => ipcRenderer.invoke(channels.projectForgetRecent, workspacePath),
@@ -36,6 +44,10 @@ export const desktopApi: DesktopApi = {
     list: () => ipcRenderer.invoke(channels.fileList),
     read: (path) => ipcRenderer.invoke(channels.fileRead, path),
     write: (input) => ipcRenderer.invoke(channels.fileWrite, input),
+    create: (path) => ipcRenderer.invoke(channels.fileCreate, path),
+    createDirectory: (path) => ipcRenderer.invoke(channels.fileCreateDirectory, path),
+    importFiles: (destinationDirectory) => ipcRenderer.invoke(channels.fileImportFiles, destinationDirectory),
+    importFolder: (destinationDirectory) => ipcRenderer.invoke(channels.fileImportFolder, destinationDirectory),
     onChanged(callback) {
       const listener = (_event: Electron.IpcRendererEvent, value: FileChangeEvent): void => callback(value);
       ipcRenderer.on(channels.fileChanged, listener);

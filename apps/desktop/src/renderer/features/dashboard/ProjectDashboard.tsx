@@ -24,8 +24,11 @@ type ProjectView = "list" | "grid";
 
 interface ProjectDashboardProps {
   recentProjects: RecentProject[];
+  projectsDirectory: string;
   error: string | null;
-  onNewProject(): Promise<void>;
+  onCreateProject(name: string): Promise<boolean>;
+  onChooseProjectsDirectory(): Promise<string | null>;
+  onOpenProject(): Promise<void>;
   onOpenRecent(workspacePath: string): Promise<boolean>;
   onForgetRecent(workspacePath: string): Promise<void>;
   onDismissError(): void;
@@ -42,6 +45,9 @@ export function ProjectDashboard(props: ProjectDashboardProps) {
   const [filter, setFilter] = useState<ProjectFilter>("all");
   const [view, setView] = useState<ProjectView>("list");
   const [lastAttempt, setLastAttempt] = useState<string | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [projectName, setProjectName] = useState("");
+  const [creating, setCreating] = useState(false);
   const shortcutLabel = navigator.userAgent.includes("Mac") ? "⌘N" : "Ctrl N";
 
   const projects = useMemo(() => {
@@ -58,12 +64,14 @@ export function ProjectDashboard(props: ProjectDashboardProps) {
       if ((event.metaKey || event.ctrlKey) && event.key.toLocaleLowerCase() === "n") {
         event.preventDefault();
         setLastAttempt(null);
-        void props.onNewProject();
+        props.onDismissError();
+        setProjectName("");
+        setCreateOpen(true);
       }
     };
     window.addEventListener("keydown", handleShortcut);
     return () => window.removeEventListener("keydown", handleShortcut);
-  }, [props.onNewProject]);
+  }, [props.onDismissError]);
 
   const openRecent = async (workspacePath: string): Promise<void> => {
     setLastAttempt(workspacePath);
@@ -72,7 +80,18 @@ export function ProjectDashboard(props: ProjectDashboardProps) {
 
   const newProject = (): void => {
     setLastAttempt(null);
-    void props.onNewProject();
+    props.onDismissError();
+    setProjectName("");
+    setCreateOpen(true);
+  };
+
+  const createProject = async (event: React.FormEvent): Promise<void> => {
+    event.preventDefault();
+    if (!projectName.trim() || creating) return;
+    setCreating(true);
+    const created = await props.onCreateProject(projectName);
+    setCreating(false);
+    if (created) setCreateOpen(false);
   };
 
   return (
@@ -119,13 +138,16 @@ export function ProjectDashboard(props: ProjectDashboardProps) {
         <main className="dashboard-main">
           <header className="dashboard-page-heading">
             <div><h1>Projects</h1><p>Continue writing or open a new LaTeX project from your computer.</p></div>
-            <button className="button button-primary dashboard-new-project" type="button" onClick={newProject}><Plus aria-hidden="true" /> New project</button>
+            <div className="dashboard-heading-actions">
+              <button className="button button-secondary dashboard-new-project" type="button" onClick={() => void props.onOpenProject()}><FolderOpen aria-hidden="true" /> Open project</button>
+              <button className="button button-primary dashboard-new-project" type="button" onClick={newProject}><Plus aria-hidden="true" /> New project</button>
+            </div>
           </header>
 
           {props.error ? (
             <div className="dashboard-error" role="alert">
               <AlertCircle aria-hidden="true" />
-              <span><strong>Project could not be opened.</strong><small>{props.error}</small></span>
+              <span><strong>Project action failed.</strong><small>{props.error}</small></span>
               {lastAttempt ? (
                 <button className="button button-secondary" type="button" onClick={() => void openRecent(lastAttempt)}><RefreshCw aria-hidden="true" /> Retry</button>
               ) : (
@@ -172,7 +194,7 @@ export function ProjectDashboard(props: ProjectDashboardProps) {
                   <span className="dashboard-empty-icon"><FilePlus2 aria-hidden="true" /></span>
                   <h2>{query || filter !== "all" ? "No matching projects" : "Create your first project"}</h2>
                   <p>{query || filter !== "all" ? "Try a different search or availability filter." : "Choose or create a folder and start writing with the isolated Docker compiler."}</p>
-                  {!query && filter === "all" ? <button className="button button-primary button-large" type="button" onClick={newProject}><Plus aria-hidden="true" /> New project</button> : null}
+                  {!query && filter === "all" ? <div className="dashboard-empty-actions"><button className="button button-primary button-large" type="button" onClick={newProject}><Plus aria-hidden="true" /> New project</button><button className="button button-secondary button-large" type="button" onClick={() => void props.onOpenProject()}><FolderOpen aria-hidden="true" /> Open existing</button></div> : null}
                 </div>
               )}
             </div>
@@ -181,6 +203,30 @@ export function ProjectDashboard(props: ProjectDashboardProps) {
           <footer className="dashboard-local-note"><HardDrive aria-hidden="true" /> Filesystem-first workspace · no upload required</footer>
         </main>
       </section>
+
+      {createOpen ? (
+        <div className="dashboard-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !creating) setCreateOpen(false); }}>
+          <form className="dashboard-dialog" role="dialog" aria-modal="true" aria-labelledby="create-project-title" onSubmit={(event) => void createProject(event)}>
+            <header className="dashboard-dialog-header">
+              <div><h2 id="create-project-title">Create a LaTeX project</h2><p>A starter document will be created on this Mac.</p></div>
+              <button type="button" onClick={() => setCreateOpen(false)} disabled={creating} aria-label="Close"><X aria-hidden="true" /></button>
+            </header>
+            <label className="dashboard-dialog-field">
+              <span>Project name</span>
+              <input autoFocus value={projectName} onChange={(event) => { setProjectName(event.target.value); if (props.error) props.onDismissError(); }} placeholder="My research paper" maxLength={80} />
+            </label>
+            <div className="dashboard-location-field">
+              <span>Save new projects to</span>
+              <div><code title={props.projectsDirectory}>{props.projectsDirectory || "Loading default location…"}</code><button className="button button-secondary" type="button" onClick={() => void props.onChooseProjectsDirectory()} disabled={creating}>Change…</button></div>
+            </div>
+            {props.error ? <p className="dashboard-dialog-error" role="alert"><AlertCircle aria-hidden="true" /> {props.error}</p> : null}
+            <footer className="dashboard-dialog-actions">
+              <button className="button button-secondary" type="button" onClick={() => setCreateOpen(false)} disabled={creating}>Cancel</button>
+              <button className="button button-primary" type="submit" disabled={creating || !projectName.trim() || !props.projectsDirectory}>{creating ? "Creating…" : "Create project"}</button>
+            </footer>
+          </form>
+        </div>
+      ) : null}
     </div>
   );
 }

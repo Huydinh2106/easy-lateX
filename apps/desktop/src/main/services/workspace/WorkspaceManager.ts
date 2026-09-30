@@ -1,4 +1,4 @@
-import { readFile, rename, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { dialog, type BrowserWindow } from "electron";
 import { findRootCandidates } from "@easy-latex/latex";
@@ -10,6 +10,41 @@ import type { SettingsManager } from "../settings/SettingsManager";
 interface ProjectMetadata {
   rootDocument?: string;
 }
+
+const WINDOWS_RESERVED_NAMES = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i;
+
+export function validateProjectName(value: string): string {
+  const name = value.trim().normalize("NFC");
+  if (!name || name.length > 80) throw new Error("Project name must contain between 1 and 80 characters");
+  const hasControlCharacter = [...name].some((character) => character.charCodeAt(0) < 32);
+  if (name === "." || name === ".." || /[<>:"/\\|?*]/.test(name) || hasControlCharacter || /[. ]$/.test(name) || WINDOWS_RESERVED_NAMES.test(name)) {
+    throw new Error("Project name contains characters that cannot be used in a folder name");
+  }
+  return name;
+}
+
+const INITIAL_DOCUMENT = `\\documentclass{article}
+
+\\title{Untitled Document}
+\\author{}
+\\date{\\today}
+
+\\begin{document}
+\\maketitle
+
+Start writing here.
+
+\\end{document}
+`;
+
+const INITIAL_GITIGNORE = `.easy-latex/build/
+*.aux
+*.fdb_latexmk
+*.fls
+*.log
+*.out
+*.synctex.gz
+`;
 
 export class WorkspaceManager {
   private currentProject: OpenProjectResult | null = null;
@@ -30,6 +65,54 @@ export class WorkspaceManager {
     const selected = result.filePaths[0];
     if (result.canceled || !selected) return null;
     return this.openPath(selected);
+  }
+
+  async create(name: string): Promise<OpenProjectResult> {
+    const projectName = validateProjectName(name);
+    const configuredDirectory = await this.settings.get("projectsDirectory");
+    await mkdir(configuredDirectory, { recursive: true });
+    const projectsDirectory = await realpath(configuredDirectory);
+    const workspacePath = path.join(projectsDirectory, projectName);
+
+    try {
+      await mkdir(workspacePath, { mode: 0o755 });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+        throw new Error(`A project named "${projectName}" already exists in the selected location`);
+      }
+      throw error;
+    }
+
+    try {
+      await writeFile(path.join(workspacePath, "main.tex"), INITIAL_DOCUMENT, { encoding: "utf8", flag: "wx", mode: 0o644 });
+      await writeFile(path.join(workspacePath, ".gitignore"), INITIAL_GITIGNORE, { encoding: "utf8", flag: "wx", mode: 0o644 });
+    } catch (error) {
+      await rm(workspacePath, { recursive: true, force: true }).catch(() => undefined);
+      throw error;
+    }
+    await this.openPath(workspacePath);
+    await this.setRoot("main.tex");
+    const result = this.current();
+    if (!result) throw new Error("The new project could not be opened");
+    return result;
+  }
+
+  async chooseProjectsDirectory(parent: BrowserWindow | null): Promise<string | null> {
+    const current = await this.settings.get("projectsDirectory");
+    const options = {
+      title: "Choose Default Projects Folder",
+      buttonLabel: "Use This Folder",
+      defaultPath: current,
+      properties: ["openDirectory", "createDirectory"] as Array<"openDirectory" | "createDirectory">
+    };
+    const result = parent ? await dialog.showOpenDialog(parent, options) : await dialog.showOpenDialog(options);
+    const selected = result.filePaths[0];
+    if (result.canceled || !selected) return null;
+    const canonical = await realpath(selected);
+    const info = await stat(canonical);
+    if (!info.isDirectory()) throw new Error("The selected projects location is not a folder");
+    await this.settings.set("projectsDirectory", canonical);
+    return canonical;
   }
 
   async openPath(workspacePath: string): Promise<OpenProjectResult> {

@@ -1,5 +1,5 @@
 import type { CompileEvent, CompileOptions, CompileResult } from "./CompileResult";
-import type { FileChangeEvent, FileContent, FileEntry, WriteFileInput, WriteFileResult } from "./FileEntry";
+import type { FileChangeEvent, FileContent, FileEntry, FileMutationResult, WriteFileInput, WriteFileResult } from "./FileEntry";
 import type { OpenProjectResult, Project, RecentProject } from "./Project";
 import type { AppSettingKey, AppSettings, UserSettingKey } from "./Settings";
 
@@ -33,6 +33,8 @@ export interface GitStatus {
 export interface DesktopApi {
   project: {
     open(): Promise<OpenProjectResult | null>;
+    create(name: string): Promise<OpenProjectResult>;
+    chooseProjectsDirectory(): Promise<string | null>;
     openRecent(workspacePath: string): Promise<OpenProjectResult>;
     recent(): Promise<RecentProject[]>;
     forgetRecent(workspacePath: string): Promise<RecentProject[]>;
@@ -43,6 +45,10 @@ export interface DesktopApi {
     list(): Promise<FileEntry[]>;
     read(path: string): Promise<FileContent>;
     write(input: WriteFileInput): Promise<WriteFileResult>;
+    create(path: string): Promise<WriteFileResult>;
+    createDirectory(path: string): Promise<FileMutationResult>;
+    importFiles(destinationDirectory: string): Promise<FileMutationResult>;
+    importFolder(destinationDirectory: string): Promise<FileMutationResult>;
     onChanged(callback: (event: FileChangeEvent) => void): () => void;
   };
   compiler: {

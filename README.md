@@ -25,6 +25,17 @@ npm run compiler:check
 The image contains `latexmk`, pdfLaTeX, XeLaTeX, LuaLaTeX, Biber, and a practical
 set of common LaTeX packages. The app never calls a host TeX executable.
 
+## Local projects and files
+
+`New project` creates a named folder containing `main.tex` and `.gitignore`.
+New projects are stored in `Documents/Easy LaTeX` by default; the location is
+shown in the creation dialog and can be changed with the native folder picker.
+`Open project` continues to open any existing local LaTeX folder.
+
+The project explorer can create files and folders or copy selected files and
+complete folder trees into the active project. Imported content stays local,
+existing paths are never overwritten, and symbolic links are rejected.
+
 ## Development
 
 ```bash

@@ -1,26 +1,33 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import type { AppSettingKey, AppSettings } from "@easy-latex/shared-types";
 
-const DEFAULT_SETTINGS: AppSettings = {
-  compilerEngine: "pdflatex",
-  explorerWidth: 232,
-  pdfWidth: 520,
-  problemsHeight: 220,
-  recentProjects: []
-};
-
 export class SettingsManager {
-  private settings: AppSettings = structuredClone(DEFAULT_SETTINGS);
+  private readonly defaults: AppSettings;
+  private settings: AppSettings;
   private loaded = false;
 
-  constructor(private readonly filePath: string) {}
+  constructor(
+    private readonly filePath: string,
+    defaultProjectsDirectory = path.join(os.homedir(), "Documents", "Easy LaTeX")
+  ) {
+    this.defaults = {
+      compilerEngine: "pdflatex",
+      projectsDirectory: path.resolve(defaultProjectsDirectory),
+      explorerWidth: 232,
+      pdfWidth: 520,
+      problemsHeight: 220,
+      recentProjects: []
+    };
+    this.settings = structuredClone(this.defaults);
+  }
 
   async load(): Promise<void> {
     if (this.loaded) return;
     try {
       const parsed = JSON.parse(await readFile(this.filePath, "utf8")) as Partial<AppSettings>;
-      this.settings = this.sanitize({ ...DEFAULT_SETTINGS, ...parsed });
+      this.settings = this.sanitize({ ...this.defaults, ...parsed });
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
       if (code !== "ENOENT" && !(error instanceof SyntaxError)) throw error;
@@ -65,9 +72,12 @@ export class SettingsManager {
     const compilerEngine = ["pdflatex", "xelatex", "lualatex"].includes(input.compilerEngine) ? input.compilerEngine : "pdflatex";
     return {
       compilerEngine,
-      explorerWidth: this.boundedNumber(input.explorerWidth, 180, 420, DEFAULT_SETTINGS.explorerWidth),
-      pdfWidth: this.boundedNumber(input.pdfWidth, 360, 900, DEFAULT_SETTINGS.pdfWidth),
-      problemsHeight: this.boundedNumber(input.problemsHeight, 120, 480, DEFAULT_SETTINGS.problemsHeight),
+      projectsDirectory: typeof input.projectsDirectory === "string" && path.isAbsolute(input.projectsDirectory)
+        ? path.resolve(input.projectsDirectory)
+        : this.defaults.projectsDirectory,
+      explorerWidth: this.boundedNumber(input.explorerWidth, 180, 420, this.defaults.explorerWidth),
+      pdfWidth: this.boundedNumber(input.pdfWidth, 360, 900, this.defaults.pdfWidth),
+      problemsHeight: this.boundedNumber(input.problemsHeight, 120, 480, this.defaults.problemsHeight),
       recentProjects: Array.isArray(input.recentProjects)
         ? input.recentProjects.filter((value): value is string => typeof value === "string" && path.isAbsolute(value)).slice(0, 12)
         : []

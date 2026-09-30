@@ -16,11 +16,14 @@ import type { SaveState } from "../features/compile/CompileToolbar";
 const idleCompileEvent: CompileEvent = { phase: "idle", message: "Ready to compile" };
 const defaultSettings: AppSettings = {
   compilerEngine: "pdflatex",
+  projectsDirectory: "",
   explorerWidth: 232,
   pdfWidth: 520,
   problemsHeight: 220,
   recentProjects: []
 };
+
+const EDITABLE_FILE_PATTERN = /\.(?:tex|bib|sty|cls|bst|ltx|md|txt)$/i;
 
 function readableError(caught: unknown, fallback: string): string {
   if (!(caught instanceof Error)) return fallback;
@@ -151,6 +154,31 @@ export function useWorkspaceController() {
     }
   }, [hydrateProject, save]);
 
+  const createProject = useCallback(async (name: string): Promise<boolean> => {
+    if (dirtyRef.current && !await save()) return false;
+    setError(null);
+    try {
+      const result = await window.desktop.project.create(name);
+      await hydrateProject(result);
+      return true;
+    } catch (caught) {
+      setError(readableError(caught, "Could not create the project"));
+      return false;
+    }
+  }, [hydrateProject, save]);
+
+  const chooseProjectsDirectory = useCallback(async (): Promise<string | null> => {
+    try {
+      const selected = await window.desktop.project.chooseProjectsDirectory();
+      if (selected) setSettings((current) => ({ ...current, projectsDirectory: selected }));
+      setError(null);
+      return selected;
+    } catch (caught) {
+      setError(readableError(caught, "Could not change the default projects folder"));
+      return null;
+    }
+  }, []);
+
   const openRecentProject = useCallback(async (workspacePath: string): Promise<boolean> => {
     if (dirtyRef.current && !await save()) return false;
     setError(null);
@@ -268,6 +296,55 @@ export function useWorkspaceController() {
     }
   }, []);
 
+  const createFile = useCallback(async (filePath: string): Promise<string | null> => {
+    setError(null);
+    try {
+      const created = await window.desktop.file.create(filePath);
+      await refreshFiles();
+      if (EDITABLE_FILE_PATTERN.test(created.path)) await loadFile(created.path);
+      return created.path;
+    } catch (caught) {
+      setError(readableError(caught, "Could not create the file"));
+      return null;
+    }
+  }, [loadFile, refreshFiles]);
+
+  const createDirectory = useCallback(async (directoryPath: string): Promise<string | null> => {
+    setError(null);
+    try {
+      const result = await window.desktop.file.createDirectory(directoryPath);
+      await refreshFiles();
+      return result.paths[0] ?? null;
+    } catch (caught) {
+      setError(readableError(caught, "Could not create the folder"));
+      return null;
+    }
+  }, [refreshFiles]);
+
+  const importFiles = useCallback(async (destinationDirectory: string): Promise<string[]> => {
+    setError(null);
+    try {
+      const result = await window.desktop.file.importFiles(destinationDirectory);
+      if (result.paths.length > 0) await refreshFiles();
+      return result.paths;
+    } catch (caught) {
+      setError(readableError(caught, "Could not add the selected files"));
+      return [];
+    }
+  }, [refreshFiles]);
+
+  const importFolder = useCallback(async (destinationDirectory: string): Promise<string[]> => {
+    setError(null);
+    try {
+      const result = await window.desktop.file.importFolder(destinationDirectory);
+      if (result.paths.length > 0) await refreshFiles();
+      return result.paths;
+    } catch (caught) {
+      setError(readableError(caught, "Could not add the selected folder"));
+      return [];
+    }
+  }, [refreshFiles]);
+
   const setEngine = useCallback(async (engine: LatexEngine): Promise<void> => {
     try { setSettings(await window.desktop.settings.set("compilerEngine", engine)); }
     catch (caught) { setError(readableError(caught, "Could not save compiler settings")); }
@@ -302,10 +379,16 @@ export function useWorkspaceController() {
     error,
     jumpTarget,
     openProject,
+    createProject,
+    chooseProjectsDirectory,
     openRecentProject,
     forgetRecentProject,
     showProjects,
     openFile,
+    createFile,
+    createDirectory,
+    importFiles,
+    importFolder,
     save,
     changeContent,
     compile,

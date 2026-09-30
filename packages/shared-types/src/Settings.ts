@@ -2,6 +2,7 @@ import type { LatexEngine } from "./Project";
 
 export interface AppSettings {
   compilerEngine: LatexEngine;
+  projectsDirectory: string;
   explorerWidth: number;
   pdfWidth: number;
   problemsHeight: number;

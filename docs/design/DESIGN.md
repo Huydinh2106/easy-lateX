@@ -39,8 +39,11 @@ It retains the recognizable visual language of the earlier interface without
 restoring accounts, shared ownership, network loading, or database-backed cards.
 
 - `Projects` represents folders the user previously selected on this computer.
-- `New project` opens the native folder picker, where a folder may be selected
-  or created.
+- `New project` asks for a project name, shows the configured default projects
+  folder, and creates a starter `main.tex` plus `.gitignore` in a new subfolder.
+- The default projects folder starts at `Documents/Easy LaTeX`; `Change…` uses
+  the native folder picker and persists the selection for later projects.
+- `Open project` uses the native folder picker for an existing local folder.
 - Search, availability filters, and list/grid views operate entirely in memory.
 - Recent paths are read through a narrow main-process API and opening a recent
   path is allowed only when it is already in trusted settings.
@@ -223,6 +226,13 @@ missing compiler image is reported with the exact local build command.
 - The root document has a star and accessible label.
 - Generated build files, `.git`, and internal application files are hidden.
 - Symlinks outside the workspace never appear as traversable project content.
+- The heading exposes New file, New folder, Add files, and Add folder actions.
+- Clicking a folder makes it the destination for subsequent create/import
+  actions; the destination is always visible and can be reset to project root.
+- Add actions use native pickers and copy local content into the project. They
+  never upload over the network or overwrite an existing path.
+- Folder imports preserve their tree, reject symbolic links and internal folder
+  names, and enforce bounded file-count and size limits.
 
 The explorer shows implementation structure because source editing is the MVP,
 but it remains visually quieter than the active document.

@@ -50,4 +50,37 @@ describe("FileManager", () => {
     await utimes(target, future, future);
     await expect(files.write({ path: "main.tex", content: "mine", expectedModifiedAt: opened.modifiedAt })).rejects.toBeInstanceOf(FileConflictError);
   });
+
+  it("creates files and folders without overwriting project or internal content", async () => {
+    await files.createDirectory("chapters");
+    const created = await files.createFile("chapters/introduction.tex");
+    expect(created.path).toBe("chapters/introduction.tex");
+    expect((await files.read(created.path)).content).toBe("");
+    await expect(files.createFile(created.path)).rejects.toThrow(/already exists/i);
+    await expect(files.createDirectory(".easy-latex/private")).rejects.toThrow(/internal folder/i);
+  });
+
+  it("imports regular files and folder trees while rejecting symbolic links", async () => {
+    const source = await mkdtemp(path.join(os.tmpdir(), "easy-latex-import-"));
+    try {
+      await writeFile(path.join(source, "references.bib"), "@book{sample, title={Sample}}");
+      const figures = path.join(source, "figures");
+      await mkdir(figures);
+      await writeFile(path.join(figures, "diagram.svg"), "<svg></svg>");
+      await files.createDirectory("assets");
+
+      expect((await files.importFiles([path.join(source, "references.bib")], "")).paths).toEqual(["references.bib"]);
+      expect((await files.importFolders([figures], "assets")).paths).toEqual(["assets/figures"]);
+      expect((await files.read("references.bib")).content).toContain("Sample");
+      expect((await files.list()).map((entry) => entry.path)).toContain("assets/figures/diagram.svg");
+      await expect(files.importFiles([path.join(source, "references.bib")], "")).rejects.toThrow(/already exists/i);
+
+      const unsafe = path.join(source, "unsafe");
+      await mkdir(unsafe);
+      await symlink(path.join(source, "references.bib"), path.join(unsafe, "linked.bib"));
+      await expect(files.importFolders([unsafe], "")).rejects.toThrow(/symbolic links/i);
+    } finally {
+      await rm(source, { recursive: true, force: true });
+    }
+  });
 });

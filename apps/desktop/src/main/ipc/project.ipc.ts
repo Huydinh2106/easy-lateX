@@ -9,6 +9,15 @@ export function registerProjectIpc(workspace: WorkspaceManager, getWindow: () =>
     assertTrustedSender(event, window?.webContents ?? null);
     return workspace.open(window);
   });
+  ipcMain.handle(channels.projectCreate, async (event, value: unknown) => {
+    assertTrustedSender(event, getWindow()?.webContents ?? null);
+    return workspace.create(assertString(value, "Project name", 80));
+  });
+  ipcMain.handle(channels.projectChooseProjectsDirectory, async (event) => {
+    const window = getWindow();
+    assertTrustedSender(event, window?.webContents ?? null);
+    return workspace.chooseProjectsDirectory(window);
+  });
   ipcMain.handle(channels.projectOpenRecent, async (event, value: unknown) => {
     assertTrustedSender(event, getWindow()?.webContents ?? null);
     return workspace.openRecent(assertString(value, "Recent project path"));

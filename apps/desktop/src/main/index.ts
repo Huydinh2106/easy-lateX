@@ -64,7 +64,10 @@ function createWindow(): BrowserWindow {
 async function bootstrap(): Promise<void> {
   const files = new FileManager();
   watcher = new FileWatcher();
-  const settings = new SettingsManager(path.join(app.getPath("userData"), "settings.json"));
+  const settings = new SettingsManager(
+    path.join(app.getPath("userData"), "settings.json"),
+    path.join(app.getPath("documents"), "Easy LaTeX")
+  );
   await settings.load();
   const workspace = new WorkspaceManager(files, watcher, settings);
   const artifacts = new ArtifactRegistry();

@@ -31,4 +31,15 @@ describe("SettingsManager recent projects", () => {
     const reloaded = new SettingsManager(settingsPath);
     expect(await reloaded.get("recentProjects")).toEqual([second]);
   });
+
+  it("uses and persists the configurable default projects directory", async () => {
+    const initial = path.join(directory, "Easy LaTeX");
+    const changed = path.join(directory, "Research");
+    const settings = new SettingsManager(settingsPath, initial);
+    expect(await settings.get("projectsDirectory")).toBe(initial);
+    await settings.set("projectsDirectory", changed);
+
+    const reloaded = new SettingsManager(settingsPath, initial);
+    expect(await reloaded.get("projectsDirectory")).toBe(changed);
+  });
 });

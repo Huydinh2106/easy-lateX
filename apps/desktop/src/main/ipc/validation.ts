@@ -66,7 +66,7 @@ export function parseSyncTeXInverse(value: unknown): SyncTeXInverseInput {
   return { page: Number(input.page), x: Number(input.x), y: Number(input.y) };
 }
 
-const settingKeys = new Set<AppSettingKey>(["compilerEngine", "explorerWidth", "pdfWidth", "problemsHeight", "recentProjects"]);
+const settingKeys = new Set<AppSettingKey>(["compilerEngine", "projectsDirectory", "explorerWidth", "pdfWidth", "problemsHeight", "recentProjects"]);
 const userSettingKeys = new Set<UserSettingKey>(["compilerEngine", "explorerWidth", "pdfWidth", "problemsHeight"]);
 
 export function parseSettingKey(value: unknown): AppSettingKey {
@@ -89,6 +89,7 @@ export function parseSettingValue<K extends AppSettingKey>(key: K, value: unknow
     if (!Array.isArray(value) || !value.every((item) => typeof item === "string")) throw new Error("Recent projects are invalid");
     return value as AppSettings[K];
   }
+  if (key === "projectsDirectory") return assertString(value, "Projects directory") as AppSettings[K];
   if (typeof value !== "number" || !Number.isFinite(value)) throw new Error("Panel size is invalid");
   return value as AppSettings[K];
 }

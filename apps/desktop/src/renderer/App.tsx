@@ -22,8 +22,11 @@ export function App() {
     return (
       <ProjectDashboard
         recentProjects={workspace.recentProjects}
+        projectsDirectory={workspace.settings.projectsDirectory}
         error={workspace.error}
-        onNewProject={workspace.openProject}
+        onCreateProject={workspace.createProject}
+        onChooseProjectsDirectory={workspace.chooseProjectsDirectory}
+        onOpenProject={workspace.openProject}
         onOpenRecent={workspace.openRecentProject}
         onForgetRecent={workspace.forgetRecentProject}
         onDismissError={workspace.clearError}
@@ -63,6 +66,10 @@ export function App() {
           selectedPath={workspace.activeFile?.path}
           rootDocument={project.rootDocument}
           onOpen={(path) => void workspace.openFile(path)}
+          onCreateFile={workspace.createFile}
+          onCreateDirectory={workspace.createDirectory}
+          onImportFiles={workspace.importFiles}
+          onImportFolder={workspace.importFolder}
         />
 
         <main className="editor-workspace">

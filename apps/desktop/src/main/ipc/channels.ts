@@ -1,5 +1,7 @@
 export const channels = {
   projectOpen: "project:open",
+  projectCreate: "project:create",
+  projectChooseProjectsDirectory: "project:choose-projects-directory",
   projectOpenRecent: "project:open-recent",
   projectRecent: "project:recent",
   projectForgetRecent: "project:forget-recent",
@@ -8,6 +10,10 @@ export const channels = {
   fileList: "file:list",
   fileRead: "file:read",
   fileWrite: "file:write",
+  fileCreate: "file:create",
+  fileCreateDirectory: "file:create-directory",
+  fileImportFiles: "file:import-files",
+  fileImportFolder: "file:import-folder",
   fileChanged: "file:changed",
   compilerBuild: "compiler:build",
   compilerCancel: "compiler:cancel",
