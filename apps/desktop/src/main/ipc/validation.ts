@@ -66,7 +66,7 @@ export function parseSyncTeXInverse(value: unknown): SyncTeXInverseInput {
   return { page: Number(input.page), x: Number(input.x), y: Number(input.y) };
 }
 
-const settingKeys = new Set<AppSettingKey>(["compilerEngine", "latexmkPath", "explorerWidth", "pdfWidth", "problemsHeight", "recentProjects"]);
+const settingKeys = new Set<AppSettingKey>(["compilerEngine", "explorerWidth", "pdfWidth", "problemsHeight", "recentProjects"]);
 const userSettingKeys = new Set<UserSettingKey>(["compilerEngine", "explorerWidth", "pdfWidth", "problemsHeight"]);
 
 export function parseSettingKey(value: unknown): AppSettingKey {
@@ -85,7 +85,6 @@ export function parseSettingValue<K extends AppSettingKey>(key: K, value: unknow
     if (value !== "pdflatex" && value !== "xelatex" && value !== "lualatex") throw new Error("Unsupported compiler engine");
     return value as AppSettings[K];
   }
-  if (key === "latexmkPath") return assertString(value, "latexmk path") as AppSettings[K];
   if (key === "recentProjects") {
     if (!Array.isArray(value) || !value.every((item) => typeof item === "string")) throw new Error("Recent projects are invalid");
     return value as AppSettings[K];

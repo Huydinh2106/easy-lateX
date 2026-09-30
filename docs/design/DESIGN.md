@@ -207,6 +207,13 @@ Compile states:
 
 A thin progress edge may animate while running. Never invent a percentage.
 
+Compilation is executed by `latexmk` inside the versioned compiler image. The
+project is mounted read-only at `/workspace`; only `.easy-latex/build` is mounted
+writable at `/output`. The container has no network, no Linux capabilities, a
+read-only root filesystem, no privilege escalation, a process limit, CPU and
+memory limits, and shell escape disabled. Docker Desktop must be running, and a
+missing compiler image is reported with the exact local build command.
+
 ## 8. Project explorer
 
 - Row height: 30–32px.
@@ -294,7 +301,8 @@ technical details.
 - No selected file: direct the user to the explorer.
 - No PDF: provide Compile guidance.
 - PDF loading: restrained spinner and text.
-- Missing compiler: explain that `latexmk` must be installed or configured.
+- Missing compiler image: explain that Docker Desktop must be running and that
+  `npm run compiler:build` creates the required local image.
 
 ## 15. Status bar
 

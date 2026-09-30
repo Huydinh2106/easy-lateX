@@ -48,12 +48,10 @@ export class CompileManager {
     await this.files.resolveExistingFile(rootDocument);
     const configuredEngine = await this.settings.get("compilerEngine");
     const engine: LatexEngine = options.engine ?? configuredEngine;
-    const executable = await this.settings.get("latexmkPath");
     const outputDirectory = await this.files.ensureInternalDirectory(".easy-latex/build");
     this.emit({ phase: "starting", message: `Starting ${engine}` });
     const started = performance.now();
     const output = await this.backend.compile({
-      executable,
       workspacePath: current.project.workspacePath,
       outputDirectory,
       rootDocument,

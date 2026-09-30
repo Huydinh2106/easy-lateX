@@ -1,7 +1,6 @@
 import type { Diagnostic, LatexEngine } from "@easy-latex/shared-types";
 
 export interface CompilerRequest {
-  executable: string;
   workspacePath: string;
   outputDirectory: string;
   rootDocument: string;

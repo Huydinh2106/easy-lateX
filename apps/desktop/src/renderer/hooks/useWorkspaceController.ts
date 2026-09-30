@@ -16,7 +16,6 @@ import type { SaveState } from "../features/compile/CompileToolbar";
 const idleCompileEvent: CompileEvent = { phase: "idle", message: "Ready to compile" };
 const defaultSettings: AppSettings = {
   compilerEngine: "pdflatex",
-  latexmkPath: "latexmk",
   explorerWidth: 232,
   pdfWidth: 520,
   problemsHeight: 220,

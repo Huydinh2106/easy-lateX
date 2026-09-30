@@ -4,7 +4,6 @@ import type { AppSettingKey, AppSettings } from "@easy-latex/shared-types";
 
 const DEFAULT_SETTINGS: AppSettings = {
   compilerEngine: "pdflatex",
-  latexmkPath: process.env.EASY_LATEX_LATEXMK_PATH?.trim() || "latexmk",
   explorerWidth: 232,
   pdfWidth: 520,
   problemsHeight: 220,
@@ -66,9 +65,6 @@ export class SettingsManager {
     const compilerEngine = ["pdflatex", "xelatex", "lualatex"].includes(input.compilerEngine) ? input.compilerEngine : "pdflatex";
     return {
       compilerEngine,
-      // Executable selection belongs to the trusted main-process launch environment,
-      // never to persisted renderer-controlled state.
-      latexmkPath: DEFAULT_SETTINGS.latexmkPath,
       explorerWidth: this.boundedNumber(input.explorerWidth, 180, 420, DEFAULT_SETTINGS.explorerWidth),
       pdfWidth: this.boundedNumber(input.pdfWidth, 360, 900, DEFAULT_SETTINGS.pdfWidth),
       problemsHeight: this.boundedNumber(input.problemsHeight, 120, 480, DEFAULT_SETTINGS.problemsHeight),

@@ -3,20 +3,27 @@
 Easy LaTeX is a filesystem-first desktop editor for LaTeX projects. Electron
 provides the native shell, React renders the product UI, CodeMirror 6 edits
 source, PDF.js renders compile output, and the Electron main process owns all
-filesystem and process access.
+filesystem and process access. LaTeX compilation runs inside a locked-down
+Docker container; no TeX distribution is installed on the host.
 
-The application does not require a web server, database, Docker, code-server,
-Code-OSS, or a cloud account. A normal project folder remains the canonical
-source of truth.
+The application does not require a web server, database, or cloud account. A
+normal project folder remains the canonical source of truth.
 
 ## Requirements
 
 - Node.js 22 or newer
 - npm 10 or newer
-- A TeX distribution that provides `latexmk`
+- Docker Desktop with the Docker engine running
 
-The selected TeX distribution must also provide the engine used by the project:
-`pdflatex`, `xelatex`, or `lualatex`.
+Build the compiler image once after cloning:
+
+```bash
+npm run compiler:build
+npm run compiler:check
+```
+
+The image contains `latexmk`, pdfLaTeX, XeLaTeX, LuaLaTeX, Biber, and a practical
+set of common LaTeX packages. The app never calls a host TeX executable.
 
 ## Development
 
@@ -54,7 +61,7 @@ Preload (contextBridge, narrow typed API)
 Electron Main
   +-- WorkspaceManager
   +-- FileManager / FileWatcher
-  +-- CompileManager / LatexmkCompiler
+  +-- CompileManager / DockerLatexCompiler
   +-- SyncTeXManager
   +-- GitManager
   +-- SettingsManager
@@ -63,6 +70,10 @@ Electron Main
 The renderer has no Node.js integration. It cannot import `fs`, spawn a process,
 run Git, or send arbitrary IPC messages. Every path received by the main process
 is resolved and checked against the active workspace.
+
+The compiler container runs without network access or Linux capabilities. The
+project is mounted read-only, while only `.easy-latex/build` is writable. The
+container root filesystem is read-only and resource limits are applied.
 
 ## Repository layout
 

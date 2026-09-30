@@ -171,7 +171,7 @@ export function ProjectDashboard(props: ProjectDashboardProps) {
                 <div className="dashboard-empty">
                   <span className="dashboard-empty-icon"><FilePlus2 aria-hidden="true" /></span>
                   <h2>{query || filter !== "all" ? "No matching projects" : "Create your first project"}</h2>
-                  <p>{query || filter !== "all" ? "Try a different search or availability filter." : "Choose or create a folder and start writing with your local TeX tools."}</p>
+                  <p>{query || filter !== "all" ? "Try a different search or availability filter." : "Choose or create a folder and start writing with the isolated Docker compiler."}</p>
                   {!query && filter === "all" ? <button className="button button-primary button-large" type="button" onClick={newProject}><Plus aria-hidden="true" /> New project</button> : null}
                 </div>
               )}

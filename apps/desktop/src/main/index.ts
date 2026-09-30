@@ -10,7 +10,7 @@ import { registerSettingsIpc } from "./ipc/settings.ipc";
 import { registerSyncTeXIpc } from "./ipc/synctex.ipc";
 import { ArtifactRegistry } from "./services/compiler/ArtifactRegistry";
 import { CompileManager } from "./services/compiler/CompileManager";
-import { LatexmkCompiler } from "./services/compiler/LatexmkCompiler";
+import { DEFAULT_COMPILER_IMAGE, DockerLatexCompiler } from "./services/compiler/DockerLatexCompiler";
 import { FileManager } from "./services/filesystem/FileManager";
 import { FileWatcher } from "./services/filesystem/FileWatcher";
 import { GitManager } from "./services/git/GitManager";
@@ -68,7 +68,8 @@ async function bootstrap(): Promise<void> {
   await settings.load();
   const workspace = new WorkspaceManager(files, watcher, settings);
   const artifacts = new ArtifactRegistry();
-  compiler = new CompileManager(new LatexmkCompiler(), workspace, files, settings, artifacts);
+  const compilerImage = process.env.EASY_LATEX_DOCKER_IMAGE?.trim() || DEFAULT_COMPILER_IMAGE;
+  compiler = new CompileManager(new DockerLatexCompiler(compilerImage), workspace, files, settings, artifacts);
   const synctex = new SyncTeXManager();
   const git = new GitManager(files);
   const getWindow = (): BrowserWindow | null => mainWindow;
