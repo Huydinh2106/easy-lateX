@@ -8,7 +8,10 @@ export default tseslint.config(
   ...tseslint.configs.recommendedTypeChecked,
   {
     languageOptions: {
-      parserOptions: { projectService: true, tsconfigRootDir: import.meta.dirname },
+      parserOptions: {
+        projectService: { allowDefaultProject: ["test/fixtures/compiler/verify.mjs"] },
+        tsconfigRootDir: import.meta.dirname
+      },
       globals: { ...globals.browser, ...globals.node }
     },
     rules: {
@@ -17,5 +20,9 @@ export default tseslint.config(
       "@typescript-eslint/no-misused-promises": "error",
       "@typescript-eslint/unbound-method": "off"
     }
+  },
+  {
+    files: ["test/fixtures/compiler/verify.mjs"],
+    extends: [tseslint.configs.disableTypeChecked]
   }
 );

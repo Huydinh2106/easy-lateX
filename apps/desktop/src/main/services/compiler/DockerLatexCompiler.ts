@@ -7,7 +7,7 @@ import { parseLatexLog } from "@easy-latex/latex";
 import type { LatexEngine } from "@easy-latex/shared-types";
 import type { CompilerBackend, CompilerOutput, CompilerRequest } from "./CompilerBackend";
 
-export const DEFAULT_COMPILER_IMAGE = "easy-latex-compiler:2026.1";
+export const DEFAULT_COMPILER_IMAGE = "easy-latex-compiler:2026.09.15";
 
 const ENGINE_FLAG: Record<LatexEngine, string> = {
   pdflatex: "-pdf",
@@ -56,8 +56,12 @@ export function buildDockerRunArguments(request: CompilerRequest, options: Docke
     "2",
     "--tmpfs",
     "/tmp:rw,nosuid,nodev,noexec,size=256m,mode=1777",
+    "--tmpfs",
+    "/var/cache/biber:rw,nosuid,nodev,exec,size=256m,mode=1777",
     "--env",
     "HOME=/tmp",
+    "--env",
+    "PAR_GLOBAL_TMPDIR=/var/cache/biber",
     ...(options.user ? ["--user", options.user] : []),
     "--mount",
     `type=bind,source=${request.workspacePath},target=/workspace,readonly`,

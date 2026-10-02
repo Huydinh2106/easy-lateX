@@ -12,6 +12,7 @@ import type {
   RecentProject
 } from "@easy-latex/shared-types";
 import type { SaveState } from "../features/compile/CompileToolbar";
+import { preserveLastSuccessfulPdf } from "../features/compile/preserveCompileResult";
 
 const idleCompileEvent: CompileEvent = { phase: "idle", message: "Ready to compile" };
 const defaultSettings: AppSettings = {
@@ -277,11 +278,7 @@ export function useWorkspaceController() {
         engine: settings.compilerEngine,
         rootDocument: projectResult.project.rootDocument
       });
-      setCompileResult((previous) => {
-        if (result.success || result.pdfUrl) return result;
-        const previousPdf = previous?.pdfUrl;
-        return previousPdf ? { ...result, pdfUrl: previousPdf } : result;
-      });
+      setCompileResult((previous) => preserveLastSuccessfulPdf(previous, result));
       setPdfStale(!result.success);
       setProblemsOpen(result.errors.length > 0 || result.warnings.length > 0);
     } catch (caught) {

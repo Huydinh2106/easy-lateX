@@ -1,21 +1,10 @@
-FROM debian:bookworm-slim
+# Full TeX Live snapshot for both linux/amd64 and linux/arm64. The manifest
+# digest makes rebuilds reproducible even if the dated registry tag changes.
+FROM danteev/texlive:2026-09-15@sha256:84252e521807fe0cd0e9f4b626834f1e335cda0097d2e01c877d4fee7e519836
 
-ARG DEBIAN_FRONTEND=noninteractive
-
-RUN apt-get update \
-    && apt-get install --yes --no-install-recommends \
-      biber \
-      fonts-lmodern \
-      latexmk \
-      texlive-bibtex-extra \
-      texlive-fonts-recommended \
-      texlive-latex-base \
-      texlive-latex-extra \
-      texlive-latex-recommended \
-      texlive-luatex \
-      texlive-xetex \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+LABEL org.opencontainers.image.title="Easy LaTeX development compiler" \
+      org.opencontainers.image.version="2026.09.15" \
+      org.opencontainers.image.description="Pinned full TeX Live runtime; packages are never installed per project"
 
 ENV HOME=/tmp
 WORKDIR /workspace

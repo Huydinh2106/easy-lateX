@@ -1,0 +1,6 @@
+\documentclass{article}
+\begin{document}
+Cancellation fixture starts an intentional infinite TeX loop.
+\newcount\forever
+\loop\advance\forever by 1\iftrue\repeat
+\end{document}
