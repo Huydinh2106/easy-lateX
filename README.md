@@ -38,6 +38,11 @@ The matrix covers Vietnamese, all three engines, BibTeX, Biber, TikZ,
 `booktabs`, `hyperref`, `listings`, multi-file projects, diagnostics, and
 cancellation.
 
+Compile cleans cached auxiliary state and rebuilds on every click, including after a
+failed build or compiler image upgrade. Problems shows the final LaTeX pass for
+successful builds and includes BibTeX/Biber errors for failed builds. Successful
+PDF previews use a snapshot so a later failed build cannot overwrite them.
+
 ## Local projects and files
 
 `New project` creates a named folder containing `main.tex` and `.gitignore`.

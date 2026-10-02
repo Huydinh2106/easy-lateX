@@ -71,6 +71,10 @@ export function buildDockerRunArguments(request: CompilerRequest, options: Docke
     "/workspace",
     options.image,
     ENGINE_FLAG[request.engine],
+    // Clean cached auxiliary state before rebuilding: -g alone can rerun
+    // BibTeX on a stale, invalid .aux before LaTeX regenerates it. Preview PDFs
+    // are separately snapshotted by ArtifactRegistry and survive this cleanup.
+    "-gg",
     "-interaction=nonstopmode",
     "-file-line-error",
     "-halt-on-error",
@@ -142,11 +146,20 @@ export class DockerLatexCompiler implements CompilerBackend {
     const synctexPath = path.join(request.outputDirectory, `${rootBase}.synctex.gz`);
     const logPath = path.join(request.outputDirectory, `${rootBase}.log`);
     const fileLog = await readFile(logPath, "utf8").catch(() => "");
-    const log = `${output}\n${fileLog}`.slice(0, MAX_LOG_CHARACTERS);
-    const diagnostics = parseLatexLog(log);
+    const bibliographyLog = await readFile(path.join(request.outputDirectory, `${rootBase}.blg`), "utf8").catch(() => "");
+    const log = `${output}\n${fileLog}\n${bibliographyLog}`.slice(0, MAX_LOG_CHARACTERS);
     const hasPdf = await access(pdfPath).then(() => true).catch(() => false);
     const hasSyncTeX = await access(synctexPath).then(() => true).catch(() => false);
     const success = !this.cancelled && exitCode === 0 && hasPdf;
+    // latexmk can recover during later passes (e.g. create an include's aux
+    // directory). A successful build's Problems must reflect the final pass.
+    const diagnostics = parseLatexLog(success && fileLog ? fileLog : log);
+    if (!success && !this.cancelled && diagnostics.errors.length === 0) {
+      diagnostics.errors.push({
+        severity: "error",
+        message: `Compilation failed (exit code ${String(exitCode)}). See the technical log for details.`
+      });
+    }
 
     return {
       success,

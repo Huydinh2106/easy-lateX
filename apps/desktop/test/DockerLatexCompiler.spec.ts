@@ -35,6 +35,7 @@ describe("DockerLatexCompiler", () => {
       "type=bind,source=/work/paper/.easy-latex/build,target=/output",
       "easy-latex-compiler:test",
       "-pdf",
+      "-gg",
       "-no-shell-escape",
       "main.tex"
     ]));
