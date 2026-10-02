@@ -1,10 +1,10 @@
 # Compiler integration fixtures
 
-`npm run compiler:test` compiles every valid project through the same locked-down
-Docker invocation used by the desktop backend. It never calls a TeX executable
-from the host. The intentionally broken fixture must fail and retain the
-missing-package root cause in its log. The final check starts a non-terminating
-compile and proves that `docker stop` cancels it.
+`npm run compiler:test` tests `DockerLatexCompiler` itself with every valid
+project. It never calls a TeX executable from the host. Tests also verify
+missing-package and BibTeX diagnostics, retry after a cached failed build,
+preservation of successful PDF bytes after a failed rebuild, and cancellation
+through the app backend. These Docker tests are opt-in; `npm test` runs unit tests.
 
 | Fixture | Engine | Coverage |
 | --- | --- | --- |

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { realpath } from "node:fs/promises";
+import { constants } from "node:fs";
+import { copyFile, realpath, unlink } from "node:fs/promises";
 import path from "node:path";
 
 export class ArtifactRegistry {
@@ -13,11 +14,16 @@ export class ArtifactRegistry {
       throw new Error("Compiler PDF output is outside the build directory");
     }
     const id = randomUUID();
-    this.artifacts.set(id, canonicalPdf);
+    // A later failed build can replace the working PDF before BibTeX fails.
+    const previewPath = path.join(canonicalOutput, `.${id}.preview.pdf`);
+    await copyFile(canonicalPdf, previewPath, constants.COPYFILE_EXCL);
+    this.artifacts.set(id, previewPath);
     while (this.artifacts.size > 8) {
       const oldest = this.artifacts.keys().next().value;
       if (!oldest) break;
+      const oldPath = this.artifacts.get(oldest);
       this.artifacts.delete(oldest);
+      if (oldPath) await unlink(oldPath).catch(() => undefined);
     }
     return `easy-latex://pdf/${id}`;
   }

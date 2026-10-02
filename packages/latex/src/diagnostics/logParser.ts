@@ -50,6 +50,18 @@ export function parseLatexLog(log: string): ParsedDiagnostics {
     const located = /^(.+?\.(?:tex|sty|cls|bib)):(\d+)(?::(\d+))?:\s*(.+)$/i.exec(line);
     if (located) {
       const message = located[4] ?? "LaTeX compilation failed";
+      if (pendingError && !isSecondaryTexError(pendingError.message)) {
+        // With -file-line-error, a bang root cause can be followed directly by
+        // "file.tex:line: Emergency stop", before TeX prints its l.N source.
+        add({
+          severity: "error",
+          ...pendingError,
+          ...(isSecondaryTexError(message) ? {
+            file: normalizeFile(located[1] ?? ""),
+            line: Number(located[2])
+          } : {})
+        });
+      }
       const severity = /warning|overfull|underfull/i.test(message) ? "warning" : "error";
       const hasRootCause = diagnostics.some((diagnostic) => diagnostic.severity === "error" && !isSecondaryTexError(diagnostic.message));
       if (severity === "warning" || !isSecondaryTexError(message) || !hasRootCause) {
@@ -63,6 +75,18 @@ export function parseLatexLog(log: string): ParsedDiagnostics {
       }
       pendingError = undefined;
     } else {
+      const bibtexLocated = /^(.+?)---line\s+(\d+)\s+of file\s+(.+?\.(?:aux|bib|bst))$/i.exec(line);
+      const bibtexReading = /^(.+?)---while reading file\s+(.+?\.(?:aux|bib|bst))$/i.exec(line);
+      const biberError = /^(?:.*?\b)?ERROR\s+-\s+(.+)$/i.exec(line);
+      if (bibtexLocated) {
+        add({ severity: "error", message: `BibTeX: ${bibtexLocated[1] ?? line}`, file: normalizeFile(bibtexLocated[3] ?? ""), line: Number(bibtexLocated[2]) });
+      } else if (bibtexReading) {
+        add({ severity: "error", message: `BibTeX: ${bibtexReading[1] ?? line}`, file: normalizeFile(bibtexReading[2] ?? "") });
+      } else if (biberError?.[1]) {
+        add({ severity: "error", message: `Biber: ${biberError[1]}` });
+      } else if (/^I couldn't open (?:database|style) file /i.test(line)) {
+        add({ severity: "error", message: `BibTeX: ${line}` });
+      }
       const bang = /^!\s*(.+)$/.exec(line);
       if (bang?.[1]) {
         const file = fileStack.at(-1);
@@ -94,8 +118,10 @@ export function parseLatexLog(log: string): ParsedDiagnostics {
   }
 
   if (pendingError) add({ severity: "error", ...pendingError });
+  const errors = diagnostics.filter((diagnostic) => diagnostic.severity === "error");
+  const hasRootCause = errors.some((diagnostic) => !isSecondaryTexError(diagnostic.message));
   return {
-    errors: diagnostics.filter((diagnostic) => diagnostic.severity === "error"),
+    errors: hasRootCause ? errors.filter((diagnostic) => !isSecondaryTexError(diagnostic.message)) : errors,
     warnings: diagnostics.filter((diagnostic) => diagnostic.severity === "warning")
   };
 }
