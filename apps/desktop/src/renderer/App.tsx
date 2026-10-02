@@ -2,6 +2,8 @@ import { CircleAlert, FileText, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { parseOutline } from "@easy-latex/latex";
 import { StatusBar } from "./components/StatusBar";
+import { PanelResizer } from "./components/PanelResizer";
+import { getPanelLayout } from "./components/panelLayout";
 import { CompileToolbar } from "./features/compile/CompileToolbar";
 import { ProjectDashboard } from "./features/dashboard/ProjectDashboard";
 import { LatexEditor, type LatexEditorHandle } from "./features/editor/LatexEditor";
@@ -14,6 +16,19 @@ export function App() {
   const workspace = useWorkspaceController();
   const editorRef = useRef<LatexEditorHandle>(null);
   const [cursorLine, setCursorLine] = useState(1);
+  const layoutRef = useRef<HTMLDivElement>(null);
+  const [layoutSize, setLayoutSize] = useState({ width: window.innerWidth, height: window.innerHeight - 74 });
+  const hasProject = Boolean(workspace.projectResult);
+
+  useEffect(() => {
+    const layout = layoutRef.current;
+    if (!layout) return;
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry) setLayoutSize({ width: entry.contentRect.width, height: entry.contentRect.height });
+    });
+    observer.observe(layout);
+    return () => observer.disconnect();
+  }, [hasProject]);
 
   useEffect(() => {
     const target = workspace.jumpTarget;
@@ -44,13 +59,14 @@ export function App() {
   }
 
   const project = workspace.projectResult.project;
+  const { explorerWidth, explorerMaximum, pdfWidth, pdfMaximum, pdfOverlay, problemsHeight, problemsMaximum } = getPanelLayout(workspace.settings, layoutSize, workspace.pdfOpen);
   return (
     <div
-      className={`app-shell${workspace.pdfOpen ? " pdf-visible" : ""}${workspace.problemsOpen ? " problems-visible" : ""}`}
+      className={`app-shell${workspace.pdfOpen ? " pdf-visible" : ""}${pdfOverlay ? " pdf-overlay" : ""}${workspace.problemsOpen ? " problems-visible" : ""}`}
       style={{
-        "--explorer-width": `${workspace.settings.explorerWidth}px`,
-        "--pdf-width": `${workspace.settings.pdfWidth}px`,
-        "--problems-height": `${workspace.settings.problemsHeight}px`
+        "--explorer-width": `${explorerWidth}px`,
+        "--pdf-width": `${pdfWidth}px`,
+        "--problems-height": `${problemsHeight}px`
       } as React.CSSProperties}
     >
       <CompileToolbar
@@ -69,7 +85,7 @@ export function App() {
         onTogglePdf={() => workspace.setPdfOpen(!workspace.pdfOpen)}
       />
 
-      <div className="workspace-layout">
+      <div className="workspace-layout" ref={layoutRef}>
         <ProjectExplorer
           files={workspace.files}
           selectedPath={workspace.activeFile?.path}
@@ -87,6 +103,9 @@ export function App() {
           onImportDropped={workspace.importDropped}
           onSelectOutline={(item) => editorRef.current?.jumpTo(item.line, item.column)}
         />
+
+        <PanelResizer label="Resize project explorer" orientation="vertical" value={explorerWidth} minimum={180} maximum={explorerMaximum} defaultValue={232}
+          onChange={(value, persist) => workspace.resizePanel("explorerWidth", value, persist)} />
 
         <main className="editor-workspace">
           <section className="editor-panel" aria-label="LaTeX source editor">
@@ -110,6 +129,10 @@ export function App() {
               )}
             </div>
           </section>
+          {workspace.problemsOpen ? (
+            <PanelResizer label="Resize Problems panel" orientation="horizontal" direction={-1} value={problemsHeight} minimum={120} maximum={problemsMaximum} defaultValue={220}
+              onChange={(value, persist) => workspace.resizePanel("problemsHeight", value, persist)} />
+          ) : null}
           <ProblemsPanel
             diagnostics={workspace.diagnostics}
             log={workspace.compileResult?.log ?? ""}
@@ -120,11 +143,15 @@ export function App() {
         </main>
 
         {workspace.pdfOpen ? (
-          <PdfViewer
-            url={workspace.compileResult?.pdfUrl}
-            stale={workspace.pdfStale}
-            onClose={() => workspace.setPdfOpen(false)}
-          />
+          <>
+            <PanelResizer label="Resize PDF preview" className="pdf-resizer" orientation="vertical" direction={-1} value={pdfWidth} minimum={360} maximum={pdfMaximum} defaultValue={520}
+              onChange={(value, persist) => workspace.resizePanel("pdfWidth", value, persist)} />
+            <PdfViewer
+              url={workspace.compileResult?.pdfUrl}
+              stale={workspace.pdfStale}
+              onClose={() => workspace.setPdfOpen(false)}
+            />
+          </>
         ) : null}
       </div>
 

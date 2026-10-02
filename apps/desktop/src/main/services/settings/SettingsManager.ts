@@ -7,6 +7,7 @@ export class SettingsManager {
   private readonly defaults: AppSettings;
   private settings: AppSettings;
   private loaded = false;
+  private pendingWrite: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly filePath: string,
@@ -88,10 +89,17 @@ export class SettingsManager {
     return Number.isFinite(value) ? Math.min(maximum, Math.max(minimum, Math.round(value))) : fallback;
   }
 
-  private async persist(): Promise<void> {
-    await mkdir(path.dirname(this.filePath), { recursive: true });
-    const temporary = `${this.filePath}.tmp`;
-    await writeFile(temporary, `${JSON.stringify(this.settings, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
-    await rename(temporary, this.filePath);
+  private persist(): Promise<void> {
+    const content = `${JSON.stringify(this.settings, null, 2)}\n`;
+    // Rapid keyboard resizing can issue several settings writes before the
+    // previous rename finishes. Serialize the shared atomic-write destination.
+    const write = this.pendingWrite.catch(() => undefined).then(async () => {
+      await mkdir(path.dirname(this.filePath), { recursive: true });
+      const temporary = `${this.filePath}.tmp`;
+      await writeFile(temporary, content, { encoding: "utf8", mode: 0o600 });
+      await rename(temporary, this.filePath);
+    });
+    this.pendingWrite = write;
+    return write;
   }
 }

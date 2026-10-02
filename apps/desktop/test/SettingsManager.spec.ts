@@ -42,4 +42,20 @@ describe("SettingsManager recent projects", () => {
     const reloaded = new SettingsManager(settingsPath, initial);
     expect(await reloaded.get("projectsDirectory")).toBe(changed);
   });
+
+  it("persists rapid panel resizing atomically and clamps saved dimensions", async () => {
+    const settings = new SettingsManager(settingsPath);
+    await settings.load();
+    await Promise.all([
+      settings.set("explorerWidth", 260),
+      settings.set("pdfWidth", 600),
+      settings.set("problemsHeight", 300),
+      ...[270, 280, 290].map((width) => settings.set("explorerWidth", width))
+    ]);
+    const reloaded = new SettingsManager(settingsPath);
+    expect(await reloaded.all()).toMatchObject({ explorerWidth: 290, pdfWidth: 600, problemsHeight: 300 });
+    await settings.set("pdfWidth", 9999);
+    await settings.set("problemsHeight", 0);
+    expect(await settings.all()).toMatchObject({ pdfWidth: 900, problemsHeight: 120 });
+  });
 });

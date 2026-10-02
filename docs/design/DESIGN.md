@@ -291,10 +291,20 @@ external viewers are not the embedded preview.
 Header controls:
 
 - current page and total pages;
-- previous/next;
-- zoom out/in and reset;
+- editable current-page field for an optional direct jump;
+- zoom out/in and fit to width (the default, follows panel resizing);
 - stale indicator;
 - close.
+
+All pages are stacked in a continuous vertical scroll area. Track the current
+page while scrolling; render only nearby canvases to keep long documents light.
+Page buttons must not be required to read the next page.
+
+Explorer/editor, editor/PDF, and editor/Problems dividers support pointer dragging,
+arrow keys (Shift for larger steps), and double-click or Enter to reset. Save panel
+dimensions at the end of a gesture. Keep at least 420px for the editor or overlay
+PDF when the window cannot accommodate all panels; cap Problems to leave source
+visible. The File outline retains its existing horizontal resize handle.
 
 Keep the last successful PDF visible while a new compile runs, fails, or is
 cancelled. Mark it `Out of date` after source changes. A successful compile
