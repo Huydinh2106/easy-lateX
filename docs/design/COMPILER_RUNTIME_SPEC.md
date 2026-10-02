@@ -1,7 +1,7 @@
 # Đặc tả compiler runtime và phân phối Easy LaTeX
 
-- **Trạng thái:** Bản nháp để thảo luận
-- **Phiên bản:** 0.1
+- **Trạng thái:** Giai đoạn A đã triển khai và kiểm thử
+- **Phiên bản:** 0.2
 - **Ngày:** 2026-10-02
 - **Phạm vi:** Biên dịch LaTeX trong development và bản desktop phát hành
 - **Chưa thuộc phạm vi hiện tại:** Xây dựng bộ cài `.pkg`
@@ -179,6 +179,11 @@ Container compile phải:
 - chạy `latexmk` với `-no-shell-escape`;
 - có timeout và hỗ trợ cancel.
 
+Image development hiện tại là full TeX Live snapshot `2026-09-15`, được khóa
+bằng OCI manifest digest đa kiến trúc. `/tmp` là `noexec`; Biber dùng một tmpfs
+thực thi riêng, rỗng sau mỗi container, vì binary PAR của Biber phải tự giải nén
+interpreter. Không package TeX nào được cài thêm trong Dockerfile.
+
 ### 8.3 Development setup
 
 Việc pull image là bước dành cho developer và có thể thực hiện bằng script npm.
@@ -236,7 +241,7 @@ child process. Không thay đổi environment của hệ thống.
 {
   "schemaVersion": 1,
   "texLiveVersion": "2026",
-  "runtimeVersion": "2026.1",
+  "runtimeVersion": "2026.09.15",
   "platform": "darwin",
   "architecture": "arm64",
   "sha256": "<artifact checksum>"

@@ -18,6 +18,10 @@ function diagnosticKey(diagnostic: Diagnostic): string {
   return [diagnostic.severity, diagnostic.file ?? "", diagnostic.line ?? "", diagnostic.column ?? "", diagnostic.message].join("|");
 }
 
+function isSecondaryTexError(message: string): boolean {
+  return /^(?:==>\s*)?(?:Emergency stop\.?|Fatal error occurred|No pages of output\.?)/i.test(message.trim());
+}
+
 export function parseLatexLog(log: string): ParsedDiagnostics {
   const diagnostics: Diagnostic[] = [];
   const seen = new Set<string>();
@@ -46,19 +50,29 @@ export function parseLatexLog(log: string): ParsedDiagnostics {
     const located = /^(.+?\.(?:tex|sty|cls|bib)):(\d+)(?::(\d+))?:\s*(.+)$/i.exec(line);
     if (located) {
       const message = located[4] ?? "LaTeX compilation failed";
-      add({
-        severity: /warning|overfull|underfull/i.test(message) ? "warning" : "error",
-        file: normalizeFile(located[1] ?? ""),
-        line: Number(located[2]),
-        ...(located[3] ? { column: Number(located[3]) } : {}),
-        message
-      });
+      const severity = /warning|overfull|underfull/i.test(message) ? "warning" : "error";
+      const hasRootCause = diagnostics.some((diagnostic) => diagnostic.severity === "error" && !isSecondaryTexError(diagnostic.message));
+      if (severity === "warning" || !isSecondaryTexError(message) || !hasRootCause) {
+        add({
+          severity,
+          file: normalizeFile(located[1] ?? ""),
+          line: Number(located[2]),
+          ...(located[3] ? { column: Number(located[3]) } : {}),
+          message
+        });
+      }
       pendingError = undefined;
     } else {
       const bang = /^!\s*(.+)$/.exec(line);
       if (bang?.[1]) {
         const file = fileStack.at(-1);
-        pendingError = { message: bang[1], ...(file ? { file } : {}) };
+        const nextError = { message: bang[1], ...(file ? { file } : {}) };
+        if (!pendingError || !isSecondaryTexError(nextError.message)) {
+          if (pendingError && !isSecondaryTexError(pendingError.message)) {
+            add({ severity: "error", ...pendingError });
+          }
+          pendingError = nextError;
+        }
       } else {
         const sourceLine = /^l\.(\d+)\s*(.*)$/.exec(line);
         if (sourceLine?.[1] && pendingError) {

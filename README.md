@@ -22,8 +22,21 @@ npm run compiler:build
 npm run compiler:check
 ```
 
-The image contains `latexmk`, pdfLaTeX, XeLaTeX, LuaLaTeX, Biber, and a practical
-set of common LaTeX packages. The app never calls a host TeX executable.
+The image is the complete TeX Live 2026 snapshot from 2026-09-15, pinned by its
+multi-architecture manifest digest. It includes `latexmk`, pdfLaTeX, XeLaTeX,
+LuaLaTeX, BibTeX, Biber, fonts, language support, and the full package set. No
+packages are installed per project, and the app never calls a host TeX
+executable.
+
+Run the real compiler fixture matrix after building the image:
+
+```bash
+npm run compiler:test
+```
+
+The matrix covers Vietnamese, all three engines, BibTeX, Biber, TikZ,
+`booktabs`, `hyperref`, `listings`, multi-file projects, diagnostics, and
+cancellation.
 
 ## Local projects and files
 
@@ -90,7 +103,10 @@ is resolved and checked against the active workspace.
 
 The compiler container runs without network access or Linux capabilities. The
 project is mounted read-only, while only `.easy-latex/build` is writable. The
-container root filesystem is read-only and resource limits are applied.
+container root filesystem is read-only and resource limits are applied. Shell
+escape is disabled. `/tmp` is non-executable; Biber receives a separate,
+ephemeral executable cache because its packaged Perl runtime must unpack before
+it starts.
 
 ## Repository layout
 

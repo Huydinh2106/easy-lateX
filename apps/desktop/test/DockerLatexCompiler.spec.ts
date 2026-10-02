@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildDockerRunArguments, resolveDockerExecutable } from "../src/main/services/compiler/DockerLatexCompiler";
+import { DEFAULT_COMPILER_IMAGE, buildDockerRunArguments, resolveDockerExecutable } from "../src/main/services/compiler/DockerLatexCompiler";
 import type { CompilerRequest } from "../src/main/services/compiler/CompilerBackend";
 
 const request: CompilerRequest = {
@@ -11,6 +11,10 @@ const request: CompilerRequest = {
 };
 
 describe("DockerLatexCompiler", () => {
+  it("uses the pinned development compiler tag", () => {
+    expect(DEFAULT_COMPILER_IMAGE).toBe("easy-latex-compiler:2026.09.15");
+  });
+
   it("builds a restricted Docker invocation with separate source and output mounts", () => {
     const args = buildDockerRunArguments(request, {
       image: "easy-latex-compiler:test",
@@ -24,6 +28,9 @@ describe("DockerLatexCompiler", () => {
       "--cap-drop", "ALL",
       "--security-opt", "no-new-privileges",
       "--user", "501:20",
+      "/tmp:rw,nosuid,nodev,noexec,size=256m,mode=1777",
+      "/var/cache/biber:rw,nosuid,nodev,exec,size=256m,mode=1777",
+      "PAR_GLOBAL_TMPDIR=/var/cache/biber",
       "type=bind,source=/work/paper,target=/workspace,readonly",
       "type=bind,source=/work/paper/.easy-latex/build,target=/output",
       "easy-latex-compiler:test",
