@@ -1,6 +1,6 @@
 import {
   Check,
-  ChevronDown,
+  ChevronRight,
   FileCode2,
   FilePlus2,
   FileText,
@@ -14,7 +14,7 @@ import {
   Trash2,
   X
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import type { OutlineItem } from "@easy-latex/latex";
 import type { FileEntry } from "@easy-latex/shared-types";
 import { FileOutline } from "./FileOutline";
@@ -75,14 +75,21 @@ function remapDescendantPath(value: string, source: string, target: string): str
   return value.startsWith(`${source}/`) ? `${target}${value.slice(source.length)}` : value;
 }
 
-function FileIcon({ entry }: { entry: FileEntry }) {
-  if (entry.kind === "directory") return <Folder aria-hidden="true" />;
-  return entry.path.toLowerCase().endsWith(".tex") ? <FileCode2 aria-hidden="true" /> : <FileText aria-hidden="true" />;
+function FileIcon({ entry, open }: { entry: FileEntry; open?: boolean }) {
+  if (entry.kind === "directory") {
+    return open ? <FolderOpen aria-hidden="true" /> : <Folder aria-hidden="true" />;
+  }
+  return entry.path.toLowerCase().endsWith(".tex") ? (
+    <FileCode2 aria-hidden="true" />
+  ) : (
+    <FileText aria-hidden="true" />
+  );
 }
 
 export function ProjectExplorer(props: ProjectExplorerProps) {
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(props.files.filter((file) => file.kind === "directory" && depth(file.path) === 0).map((file) => file.path)));
   const [destinationDirectory, setDestinationDirectory] = useState("");
+  const [selectedFolder, setSelectedFolder] = useState<string | null>(null);
   const [createKind, setCreateKind] = useState<CreateKind | null>(null);
   const [newName, setNewName] = useState("");
   const [renamePath, setRenamePath] = useState<string | null>(null);
@@ -104,9 +111,12 @@ export function ProjectExplorer(props: ProjectExplorerProps) {
     if (destinationDirectory && !props.files.some((entry) => entry.kind === "directory" && entry.path === destinationDirectory)) {
       setDestinationDirectory("");
     }
+    if (selectedFolder && !props.files.some((entry) => entry.kind === "directory" && entry.path === selectedFolder)) {
+      setSelectedFolder(null);
+    }
     if (renamePath && !props.files.some((entry) => entry.path === renamePath)) setRenamePath(null);
     if (contextMenu && !props.files.some((entry) => entry.path === contextMenu.entry.path)) setContextMenu(null);
-  }, [contextMenu, destinationDirectory, props.files, renamePath]);
+  }, [contextMenu, destinationDirectory, props.files, renamePath, selectedFolder]);
 
   useEffect(() => {
     if (!contextMenu) return undefined;
@@ -138,6 +148,7 @@ export function ProjectExplorer(props: ProjectExplorerProps) {
     if (busy || renamePath) return;
     if (entry.kind === "directory") {
       setDestinationDirectory(entry.path);
+      setSelectedFolder(entry.path);
       setExpanded((current) => {
         const next = new Set(current);
         if (next.has(entry.path)) next.delete(entry.path);
@@ -147,12 +158,17 @@ export function ProjectExplorer(props: ProjectExplorerProps) {
       return;
     }
     setDestinationDirectory(entry.parentPath);
+    setSelectedFolder(null);
     props.onOpen(entry.path);
   }
 
   function beginCreate(kind: CreateKind): void {
     setContextMenu(null);
     setRenamePath(null);
+    if (destinationDirectory) {
+      expandPath(destinationDirectory);
+      setSelectedFolder(destinationDirectory);
+    }
     setCreateKind(kind);
     setNewName(kind === "file" ? "untitled.tex" : "new-folder");
   }
@@ -169,7 +185,10 @@ export function ProjectExplorer(props: ProjectExplorerProps) {
     setBusy(false);
     if (!created) return;
     expandPath(createKind === "folder" ? created : parentPath(created));
-    if (createKind === "folder") setDestinationDirectory(created);
+    if (createKind === "folder") {
+      setDestinationDirectory(created);
+      setSelectedFolder(created);
+    }
     setCreateKind(null);
   }
 
@@ -204,6 +223,7 @@ export function ProjectExplorer(props: ProjectExplorerProps) {
   function remapExplorerPaths(source: string, target: string): void {
     setExpanded((current) => new Set([...current].map((value) => remapDescendantPath(value, source, target))));
     setDestinationDirectory((current) => remapDescendantPath(current, source, target));
+    setSelectedFolder((current) => (current ? remapDescendantPath(current, source, target) : null));
   }
 
   async function moveItem(source: string, destination: string): Promise<void> {
@@ -252,6 +272,7 @@ export function ProjectExplorer(props: ProjectExplorerProps) {
     if (!removed) return;
     setExpanded((current) => new Set([...current].filter((value) => !isSameOrDescendant(value, entry.path))));
     setDestinationDirectory((current) => isSameOrDescendant(current, entry.path) ? "" : current);
+    setSelectedFolder((current) => (current && isSameOrDescendant(current, entry.path) ? null : current));
   }
 
   const destinationLabel = destinationDirectory || "Project root";
@@ -259,101 +280,159 @@ export function ProjectExplorer(props: ProjectExplorerProps) {
   return (
     <aside ref={explorerRef} className="project-explorer" aria-label="Project files">
       <section className="project-files-panel" aria-label="Project file tree">
-      <header className="explorer-heading">
-        <div className="explorer-heading-main">
-          <span>Project</span>
-          <small>{props.files.filter((file) => file.kind === "file").length} files</small>
-          <div className="explorer-actions" aria-label="Project file actions">
-            <button type="button" onClick={() => beginCreate("file")} disabled={busy} aria-label="New file" title={`New file in ${destinationLabel}`}><FilePlus2 aria-hidden="true" /></button>
-            <button type="button" onClick={() => beginCreate("folder")} disabled={busy} aria-label="New folder" title={`New folder in ${destinationLabel}`}><FolderPlus aria-hidden="true" /></button>
-            <button type="button" onClick={() => void importItems("files")} disabled={busy} aria-label="Add files" title={`Add files to ${destinationLabel}`}><FileUp aria-hidden="true" /></button>
-            <button type="button" onClick={() => void importItems("folder")} disabled={busy} aria-label="Add folder" title={`Add folder to ${destinationLabel}`}><FolderUp aria-hidden="true" /></button>
+        <header className="explorer-heading">
+          <div className="explorer-heading-main">
+            <span className="explorer-title">Project</span>
+            <div className="explorer-actions" aria-label="Project file actions">
+              <button type="button" onClick={() => beginCreate("file")} disabled={busy} aria-label="New file" title={`New file in ${destinationLabel}`}><FilePlus2 aria-hidden="true" /></button>
+              <button type="button" onClick={() => beginCreate("folder")} disabled={busy} aria-label="New folder" title={`New folder in ${destinationLabel}`}><FolderPlus aria-hidden="true" /></button>
+              <button type="button" onClick={() => void importItems("files")} disabled={busy} aria-label="Add files" title={`Add files to ${destinationLabel}`}><FileUp aria-hidden="true" /></button>
+              <button type="button" onClick={() => void importItems("folder")} disabled={busy} aria-label="Add folder" title={`Add folder to ${destinationLabel}`}><FolderUp aria-hidden="true" /></button>
+            </div>
           </div>
-        </div>
-        <button className="explorer-destination" type="button" onClick={() => setDestinationDirectory("")} disabled={!destinationDirectory} title={destinationDirectory ? "Use project root instead" : "New items are added to the project root"}>
-          <span>Add to</span><strong>{destinationLabel}</strong>{destinationDirectory ? <X aria-hidden="true" /> : null}
-        </button>
-      </header>
+        </header>
 
-      {createKind ? (
-        <form className="explorer-create-form" onSubmit={(event) => void submitCreate(event)}>
-          {createKind === "file" ? <FilePlus2 aria-hidden="true" /> : <FolderPlus aria-hidden="true" />}
-          <input autoFocus value={newName} onChange={(event) => setNewName(event.target.value)} onFocus={(event) => event.currentTarget.select()} aria-label={createKind === "file" ? "New file name" : "New folder name"} />
-          <button type="submit" disabled={!newName.trim() || busy} aria-label="Create"><Check aria-hidden="true" /></button>
-          <button type="button" onClick={() => setCreateKind(null)} disabled={busy} aria-label="Cancel"><X aria-hidden="true" /></button>
-        </form>
-      ) : null}
+        <nav
+          className={`file-tree${dropTarget && !dropTarget.rowPath ? " file-tree-drop" : ""}`}
+          role="tree"
+          aria-label="LaTeX project files"
+          onClick={(event) => {
+            if (event.target === event.currentTarget) {
+              setDestinationDirectory("");
+              setSelectedFolder(null);
+            }
+          }}
+          onDragOver={(event) => handleDragOver(event, "")}
+          onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropTarget(null); }}
+          onDrop={(event) => void handleDrop(event, "")}
+        >
+          {(() => {
+            const createDepth = destinationDirectory ? depth(destinationDirectory) + 1 : 0;
+            const targetInVisible = Boolean(destinationDirectory && visibleFiles.some((entry) => entry.kind === "directory" && entry.path === destinationDirectory));
 
-      <nav
-        className={`file-tree${dropTarget && !dropTarget.rowPath ? " file-tree-drop" : ""}`}
-        role="tree"
-        aria-label="LaTeX project files"
-        onDragOver={(event) => handleDragOver(event, "")}
-        onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropTarget(null); }}
-        onDrop={(event) => void handleDrop(event, "")}
-      >
-        {visibleFiles.length === 0 ? <p className="panel-empty">Drop files or folders here, or use the actions above.</p> : visibleFiles.map((entry) => {
-          const open = entry.kind === "directory" && expanded.has(entry.path);
-          const target = entry.kind === "directory" && destinationDirectory === entry.path;
-          const dropDestination = entry.kind === "directory" ? entry.path : entry.parentPath;
-          const isDropTarget = dropTarget?.rowPath === entry.path;
-          const renaming = renamePath === entry.path;
-          return (
-            <div
-              key={entry.path}
-              className={`file-row${props.selectedPath === entry.path ? " file-row-selected" : ""}${target ? " file-row-target" : ""}${isDropTarget ? " file-row-drop" : ""}${dragSource === entry.path ? " file-row-dragging" : ""}`}
-              role="treeitem"
-              tabIndex={0}
-              aria-selected={props.selectedPath === entry.path}
-              aria-current={target ? "location" : undefined}
-              aria-expanded={entry.kind === "directory" ? open : undefined}
-              draggable={!busy && !renaming}
-              style={{ paddingLeft: `${8 + depth(entry.path) * 14}px` }}
-              onClick={() => activate(entry)}
-              onKeyDown={(event) => {
-                if ((event.key === "Enter" || event.key === " ") && !renaming) {
-                  event.preventDefault();
-                  activate(entry);
-                }
-              }}
-              onContextMenu={(event) => {
-                event.preventDefault();
-                setContextMenu({ entry, x: Math.min(event.clientX, window.innerWidth - 180), y: Math.min(event.clientY, window.innerHeight - 110) });
-              }}
-              onDragStart={(event) => {
-                setContextMenu(null);
-                setDragSource(entry.path);
-                event.dataTransfer.effectAllowed = "move";
-                event.dataTransfer.setData(INTERNAL_DRAG_TYPE, entry.path);
-                event.dataTransfer.setData("text/plain", entry.path);
-              }}
-              onDragEnd={() => { setDragSource(null); setDropTarget(null); }}
-              onDragEnter={() => { if (entry.kind === "directory") expandPath(entry.path); }}
-              onDragOver={(event) => handleDragOver(event, dropDestination, entry.path)}
-              onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropTarget(null); }}
-              onDrop={(event) => void handleDrop(event, dropDestination)}
-              title={entry.path}
-            >
-              {entry.kind === "directory" ? <ChevronDown className={open ? "" : "tree-chevron-collapsed"} aria-hidden="true" /> : <span className="tree-spacer" />}
-              {entry.kind === "directory" && open ? <FolderOpen aria-hidden="true" /> : <FileIcon entry={entry} />}
-              {renaming ? (
-                <form className="file-rename-form" onSubmit={(event) => void submitRename(event, entry)} onClick={(event) => event.stopPropagation()}>
+            const renderCreateForm = () => {
+              if (!createKind) return null;
+              return (
+                <form
+                  key="__create_form__"
+                  className="file-row file-create-row"
+                  style={{ paddingLeft: `${8 + createDepth * 14}px` }}
+                  onSubmit={(event) => void submitCreate(event)}
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  <span className="tree-spacer" aria-hidden="true" />
+                  {createKind === "file" ? (
+                    <FilePlus2 className="file-create-icon" aria-hidden="true" />
+                  ) : (
+                    <FolderPlus className="file-create-icon" aria-hidden="true" />
+                  )}
                   <input
                     autoFocus
-                    value={renameName}
-                    onChange={(event) => setRenameName(event.target.value)}
+                    className="file-create-input"
+                    value={newName}
+                    onChange={(event) => setNewName(event.target.value)}
                     onFocus={(event) => event.currentTarget.select()}
-                    onKeyDown={(event) => { if (event.key === "Escape") setRenamePath(null); }}
-                    aria-label={`Rename ${entry.name}`}
-                    aria-invalid={!renameName.trim() || /[\\/]/.test(renameName)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Escape") setCreateKind(null);
+                    }}
+                    aria-label={createKind === "file" ? "New file name" : "New folder name"}
                   />
+                  <div className="file-create-actions">
+                    <button type="submit" disabled={!newName.trim() || busy} aria-label="Create">
+                      <Check aria-hidden="true" />
+                    </button>
+                    <button type="button" onClick={() => setCreateKind(null)} disabled={busy} aria-label="Cancel">
+                      <X aria-hidden="true" />
+                    </button>
+                  </div>
                 </form>
-              ) : <span className="file-name">{entry.name}</span>}
-              {props.rootDocument === entry.path ? <Star className="root-star" aria-label="Root document" /> : null}
-            </div>
-          );
-        })}
-      </nav>
+              );
+            };
+
+            if (visibleFiles.length === 0) {
+              return createKind ? renderCreateForm() : <p className="panel-empty">Drop files or folders here, or use the actions above.</p>;
+            }
+
+            return (
+              <>
+                {(!destinationDirectory || !targetInVisible) ? renderCreateForm() : null}
+                {visibleFiles.map((entry) => {
+                  const open = entry.kind === "directory" && expanded.has(entry.path);
+                  const target = entry.kind === "directory" && selectedFolder === entry.path;
+                  const dropDestination = entry.kind === "directory" ? entry.path : entry.parentPath;
+                  const isDropTarget = dropTarget?.rowPath === entry.path;
+                  const renaming = renamePath === entry.path;
+                  const isTargetDir = entry.kind === "directory" && destinationDirectory === entry.path;
+
+                  return (
+                    <Fragment key={entry.path}>
+                      <div
+                        className={`file-row${props.selectedPath === entry.path ? " file-row-selected" : ""}${target ? " file-row-target" : ""}${isDropTarget ? " file-row-drop" : ""}${dragSource === entry.path ? " file-row-dragging" : ""}`}
+                        role="treeitem"
+                        tabIndex={0}
+                        aria-selected={props.selectedPath === entry.path || target}
+                        aria-current={target ? "location" : undefined}
+                        aria-expanded={entry.kind === "directory" ? open : undefined}
+                        draggable={!busy && !renaming}
+                        style={{ paddingLeft: `${8 + depth(entry.path) * 14}px` }}
+                        onClick={() => activate(entry)}
+                        onKeyDown={(event) => {
+                          if ((event.key === "Enter" || event.key === " ") && !renaming) {
+                            event.preventDefault();
+                            activate(entry);
+                          }
+                        }}
+                        onContextMenu={(event) => {
+                          event.preventDefault();
+                          if (entry.kind === "directory") {
+                            setSelectedFolder(entry.path);
+                            setDestinationDirectory(entry.path);
+                          }
+                          setContextMenu({ entry, x: Math.min(event.clientX, window.innerWidth - 180), y: Math.min(event.clientY, window.innerHeight - 110) });
+                        }}
+                        onDragStart={(event) => {
+                          setContextMenu(null);
+                          setDragSource(entry.path);
+                          event.dataTransfer.effectAllowed = "move";
+                          event.dataTransfer.setData(INTERNAL_DRAG_TYPE, entry.path);
+                          event.dataTransfer.setData("text/plain", entry.path);
+                        }}
+                        onDragEnd={() => { setDragSource(null); setDropTarget(null); }}
+                        onDragEnter={() => { if (entry.kind === "directory") expandPath(entry.path); }}
+                        onDragOver={(event) => handleDragOver(event, dropDestination, entry.path)}
+                        onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropTarget(null); }}
+                        onDrop={(event) => void handleDrop(event, dropDestination)}
+                        title={entry.path}
+                      >
+                        {entry.kind === "directory" ? (
+                          <ChevronRight className={`tree-chevron${open ? " tree-chevron-open" : ""}`} aria-hidden="true" />
+                        ) : (
+                          <span className="tree-spacer" aria-hidden="true" />
+                        )}
+                        <FileIcon entry={entry} open={open} />
+                        {renaming ? (
+                          <form className="file-rename-form" onSubmit={(event) => void submitRename(event, entry)} onClick={(event) => event.stopPropagation()}>
+                            <input
+                              autoFocus
+                              value={renameName}
+                              onChange={(event) => setRenameName(event.target.value)}
+                              onFocus={(event) => event.currentTarget.select()}
+                              onKeyDown={(event) => { if (event.key === "Escape") setRenamePath(null); }}
+                              aria-label={`Rename ${entry.name}`}
+                              aria-invalid={!renameName.trim() || /[\\/]/.test(renameName)}
+                            />
+                          </form>
+                        ) : <span className="file-name">{entry.name}</span>}
+                        {props.rootDocument === entry.path ? <Star className="root-star" aria-label="Root document" /> : null}
+                      </div>
+                      {isTargetDir ? renderCreateForm() : null}
+                    </Fragment>
+                  );
+                })}
+              </>
+            );
+          })()}
+        </nav>
       </section>
 
       <FileOutline

@@ -109,10 +109,6 @@ export function App() {
 
         <main className="editor-workspace">
           <section className="editor-panel" aria-label="LaTeX source editor">
-            <header className="editor-header">
-              <span>{workspace.activeFile?.path ?? "No file selected"}</span>
-              {workspace.activeFile ? <small>{workspace.activeFile.size.toLocaleString()} bytes</small> : null}
-            </header>
             <div className="editor-surface">
               {workspace.activeFile ? (
                 <LatexEditor
