@@ -21,7 +21,8 @@ const defaultSettings: AppSettings = {
   explorerWidth: 232,
   pdfWidth: 520,
   problemsHeight: 220,
-  recentProjects: []
+  recentProjects: [],
+  collaborationApiUrl: ''
 };
 
 const EDITABLE_FILE_PATTERN = /\.(?:tex|bib|sty|cls|bst|ltx|md|txt)$/i;

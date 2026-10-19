@@ -31,6 +31,14 @@ export interface GitStatus {
 }
 
 export interface DesktopApi {
+  auth: {
+    state(): Promise<import("./Collaboration").AccountState>;
+    configure(url: string): Promise<import("./Collaboration").AccountState>;
+    github(): Promise<import("./Collaboration").AccountState>;
+    cancel(): Promise<void>;
+    signOut(): Promise<void>;
+  };
+  collaboration: import("./Collaboration").CollaborationApi;
   project: {
     open(): Promise<OpenProjectResult | null>;
     create(name: string): Promise<OpenProjectResult>;

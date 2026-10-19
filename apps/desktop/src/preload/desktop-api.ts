@@ -1,5 +1,5 @@
 import { ipcRenderer, webUtils } from "electron";
-import type { CompileEvent, CompileOptions, DesktopApi, FileChangeEvent } from "@easy-latex/shared-types";
+import type { CompileEvent, CompileOptions, DesktopApi, FileChangeEvent, ProjectUpdateEvent } from "@easy-latex/shared-types";
 
 const channels = {
   projectOpen: "project:open",
@@ -33,6 +33,54 @@ const channels = {
 } as const;
 
 export const desktopApi: DesktopApi = {
+  auth: {
+    state: () => ipcRenderer.invoke("account:action", "state"),
+    configure: url => ipcRenderer.invoke('account:action', 'configure', url),
+    github: () => ipcRenderer.invoke("account:action", "github"),
+    cancel: () => ipcRenderer.invoke("account:action", "cancel"),
+    signOut: () => ipcRenderer.invoke("account:action", "signOut")
+  },
+  collaboration: {
+    legacyConfirmation: email => ipcRenderer.invoke('collaboration:action','legacyConfirmation',email),
+    linkLegacy: (email,code) => ipcRenderer.invoke('collaboration:action','linkLegacy',{email,code}),
+    legacyProjects: () => ipcRenderer.invoke('collaboration:action','legacyProjects'),
+    migrateLegacy: projectId => ipcRenderer.invoke('collaboration:action','migrateLegacy',projectId),
+    onProjectUpdate(projectId,callback) {
+      const subscriptionId=crypto.randomUUID();
+      let active=true;
+      const listener=(_event:Electron.IpcRendererEvent,payload:{subscriptionId:string;update:ProjectUpdateEvent})=>{
+        if(active&&payload.subscriptionId===subscriptionId&&payload.update.projectId===projectId)callback(payload.update);
+      };
+      ipcRenderer.on('collaboration:update',listener);
+      void ipcRenderer.invoke('collaboration:action','watchProject',{projectId,subscriptionId}).catch(()=>{if(active)callback({projectId,type:'disconnected'});});
+      return()=>{active=false;ipcRenderer.removeListener('collaboration:update',listener);void ipcRenderer.invoke('collaboration:action','unwatchProject',subscriptionId).catch(()=>undefined);};
+    },
+    links: () => ipcRenderer.invoke("collaboration:action", "links"),
+    importProject: () => ipcRenderer.invoke("collaboration:action", "importProject"),
+    shareCurrentProject: () => ipcRenderer.invoke("collaboration:action", "shareCurrentProject"),
+    projects: () => ipcRenderer.invoke("collaboration:action", "projects"),
+    create: input => ipcRenderer.invoke("collaboration:action", "create", input),
+    files: projectId => ipcRenderer.invoke("collaboration:action", "files", projectId),
+    createFile: (projectId, path) => ipcRenderer.invoke("collaboration:action", "createFile", {projectId, path}),
+    directories: projectId => ipcRenderer.invoke("collaboration:action", "directories", projectId),
+    createDirectory: (projectId, path) => ipcRenderer.invoke("collaboration:action", "createDirectory", {projectId, path}),
+    importFiles: (projectId, destinationDirectory) => ipcRenderer.invoke("collaboration:action", "importFiles", {projectId, destinationDirectory}),
+    importFolder: (projectId, destinationDirectory) => ipcRenderer.invoke("collaboration:action", "importFolder", {projectId, destinationDirectory}),
+    importDropped: (projectId, sourcePaths, destinationDirectory) => ipcRenderer.invoke("collaboration:action", "importDropped", {projectId, sourcePaths, destinationDirectory}),
+    acquire: fileId => ipcRenderer.invoke("collaboration:action", "acquire", fileId),
+    renew: (fileId, token) => ipcRenderer.invoke("collaboration:action", "renew", {fileId, token}),
+    done: input => ipcRenderer.invoke("collaboration:action", "done", input),
+    release: (fileId, token) => ipcRenderer.invoke("collaboration:action", "release", {fileId, token}),
+    history: fileId => ipcRenderer.invoke("collaboration:action", "history", fileId),
+    invite: (projectId, email, role) => ipcRenderer.invoke("collaboration:action", "invite", {projectId, email, role}),
+    invitations: () => ipcRenderer.invoke("collaboration:action", "invitations"),
+    accept: invitationId => ipcRenderer.invoke("collaboration:action", "accept", invitationId),
+    saveDraft: (projectId, path, content, baseVersion) => ipcRenderer.invoke("collaboration:action", "saveDraft", {projectId, path, content, baseVersion}),
+    draft: (projectId, path) => ipcRenderer.invoke("collaboration:action", "draft", {projectId, path}),
+    clearDraft: (projectId, path) => ipcRenderer.invoke("collaboration:action", "clearDraft", {projectId, path}),
+    cancelCompile: () => ipcRenderer.invoke("collaboration:action", "cancelCompile"),
+    compile: (projectId, files, rootDocument, engine) => ipcRenderer.invoke("collaboration:action", "compile", {projectId, files, rootDocument, engine})
+  },
   project: {
     open: () => ipcRenderer.invoke(channels.projectOpen),
     create: (name) => ipcRenderer.invoke(channels.projectCreate, name),

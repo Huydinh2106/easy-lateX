@@ -28,3 +28,8 @@ apps/desktop/out/
 *.out
 *.run.xml
 *.synctex.gz
+
+# Collaboration development data
+.local/
+supabase/.temp/
+supabase/.branches/

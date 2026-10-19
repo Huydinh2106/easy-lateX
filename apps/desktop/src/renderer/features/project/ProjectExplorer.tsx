@@ -22,6 +22,9 @@ import { FileOutline } from "./FileOutline";
 type CreateKind = "file" | "folder";
 
 interface ProjectExplorerProps {
+  capabilities?: { createFile: boolean; createDirectory: boolean; move: boolean; remove: boolean; import: boolean };
+  disabled?: boolean;
+  fileNotes?: Record<string, string>;
   files: FileEntry[];
   selectedPath?: string | undefined;
   rootDocument?: string | undefined;
@@ -87,6 +90,7 @@ function FileIcon({ entry, open }: { entry: FileEntry; open?: boolean }) {
 }
 
 export function ProjectExplorer(props: ProjectExplorerProps) {
+  const permissions = props.capabilities ?? {createFile: true, createDirectory: true, move: true, remove: true, import: true};
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(props.files.filter((file) => file.kind === "directory" && depth(file.path) === 0).map((file) => file.path)));
   const [destinationDirectory, setDestinationDirectory] = useState("");
   const [selectedFolder, setSelectedFolder] = useState<string | null>(null);
@@ -145,7 +149,7 @@ export function ProjectExplorer(props: ProjectExplorerProps) {
   }
 
   function activate(entry: FileEntry): void {
-    if (busy || renamePath) return;
+    if (busy || props.disabled || renamePath) return;
     if (entry.kind === "directory") {
       setDestinationDirectory(entry.path);
       setSelectedFolder(entry.path);
@@ -163,6 +167,7 @@ export function ProjectExplorer(props: ProjectExplorerProps) {
   }
 
   function beginCreate(kind: CreateKind): void {
+    if (props.disabled || !(kind === "file" ? permissions.createFile : permissions.createDirectory)) return;
     setContextMenu(null);
     setRenamePath(null);
     if (destinationDirectory) {
@@ -176,7 +181,7 @@ export function ProjectExplorer(props: ProjectExplorerProps) {
   async function submitCreate(event: React.FormEvent): Promise<void> {
     event.preventDefault();
     const name = newName.trim();
-    if (!name || busy) return;
+    if (!name || busy || props.disabled || !(createKind === "folder" ? permissions.createDirectory : permissions.createFile)) return;
     const target = destinationDirectory ? `${destinationDirectory}/${name}` : name;
     setBusy(true);
     const created = createKind === "folder"
@@ -196,7 +201,7 @@ export function ProjectExplorer(props: ProjectExplorerProps) {
     event.preventDefault();
     event.stopPropagation();
     const name = renameName.trim();
-    if (!name || /[\\/]/.test(name) || busy) return;
+    if (!name || /[\\/]/.test(name) || busy || props.disabled || !permissions.move) return;
     if (name === entry.name) {
       setRenamePath(null);
       return;
@@ -211,7 +216,7 @@ export function ProjectExplorer(props: ProjectExplorerProps) {
   }
 
   async function importItems(kind: "files" | "folder"): Promise<void> {
-    if (busy) return;
+    if (busy || props.disabled || !permissions.import) return;
     setBusy(true);
     const imported = kind === "files"
       ? await props.onImportFiles(destinationDirectory)
@@ -228,7 +233,7 @@ export function ProjectExplorer(props: ProjectExplorerProps) {
 
   async function moveItem(source: string, destination: string): Promise<void> {
     const target = destination ? `${destination}/${itemName(source)}` : itemName(source);
-    if (source === target || busy) return;
+    if (source === target || busy || props.disabled || !permissions.move) return;
     setBusy(true);
     const moved = await props.onMove(source, target);
     setBusy(false);
@@ -240,6 +245,7 @@ export function ProjectExplorer(props: ProjectExplorerProps) {
   async function handleDrop(event: React.DragEvent, destination: string): Promise<void> {
     event.preventDefault();
     event.stopPropagation();
+    if (props.disabled || (!permissions.move && !permissions.import)) return;
     const internalSource = event.dataTransfer.getData(INTERNAL_DRAG_TYPE) || dragSource;
     const droppedFiles = Array.from(event.dataTransfer.files);
     setDropTarget(null);
@@ -248,7 +254,7 @@ export function ProjectExplorer(props: ProjectExplorerProps) {
       await moveItem(internalSource, destination);
       return;
     }
-    if (droppedFiles.length === 0 || busy) return;
+    if (droppedFiles.length === 0 || busy || !permissions.import) return;
     setBusy(true);
     const imported = await props.onImportDropped(droppedFiles, destination);
     setBusy(false);
@@ -258,11 +264,13 @@ export function ProjectExplorer(props: ProjectExplorerProps) {
   function handleDragOver(event: React.DragEvent, destination: string, rowPath?: string): void {
     event.preventDefault();
     event.stopPropagation();
+    if (props.disabled || (!permissions.move && !permissions.import)) {event.dataTransfer.dropEffect = "none"; return;}
     event.dataTransfer.dropEffect = dragSource || event.dataTransfer.types.includes(INTERNAL_DRAG_TYPE) ? "move" : "copy";
     setDropTarget((current) => current?.destination === destination && current.rowPath === rowPath ? current : { destination, ...(rowPath ? { rowPath } : {}) });
   }
 
   async function deleteEntry(entry: FileEntry): Promise<void> {
+    if (props.disabled || !permissions.remove) return;
     setContextMenu(null);
     const description = entry.kind === "directory" ? `the folder “${entry.name}” and all of its contents` : `“${entry.name}”`;
     if (!window.confirm(`Delete ${description}? This action cannot be undone.`)) return;
@@ -284,10 +292,10 @@ export function ProjectExplorer(props: ProjectExplorerProps) {
           <div className="explorer-heading-main">
             <span className="explorer-title">Project</span>
             <div className="explorer-actions" aria-label="Project file actions">
-              <button type="button" onClick={() => beginCreate("file")} disabled={busy} aria-label="New file" title={`New file in ${destinationLabel}`}><FilePlus2 aria-hidden="true" /></button>
-              <button type="button" onClick={() => beginCreate("folder")} disabled={busy} aria-label="New folder" title={`New folder in ${destinationLabel}`}><FolderPlus aria-hidden="true" /></button>
-              <button type="button" onClick={() => void importItems("files")} disabled={busy} aria-label="Add files" title={`Add files to ${destinationLabel}`}><FileUp aria-hidden="true" /></button>
-              <button type="button" onClick={() => void importItems("folder")} disabled={busy} aria-label="Add folder" title={`Add folder to ${destinationLabel}`}><FolderUp aria-hidden="true" /></button>
+              {permissions.createFile ? <button type="button" onClick={() => beginCreate("file")} disabled={busy || props.disabled} aria-label="New file" title={`New file in ${destinationLabel}`}><FilePlus2 aria-hidden="true" /></button> : null}
+              {permissions.createDirectory ? <button type="button" onClick={() => beginCreate("folder")} disabled={busy || props.disabled} aria-label="New folder" title={`New folder in ${destinationLabel}`}><FolderPlus aria-hidden="true" /></button> : null}
+              {permissions.import ? <><button type="button" onClick={() => void importItems("files")} disabled={busy || props.disabled} aria-label="Add files" title={`Add files to ${destinationLabel}`}><FileUp aria-hidden="true" /></button>
+              <button type="button" onClick={() => void importItems("folder")} disabled={busy || props.disabled} aria-label="Add folder" title={`Add folder to ${destinationLabel}`}><FolderUp aria-hidden="true" /></button></> : null}
             </div>
           </div>
         </header>
@@ -373,7 +381,7 @@ export function ProjectExplorer(props: ProjectExplorerProps) {
                         aria-selected={props.selectedPath === entry.path || target}
                         aria-current={target ? "location" : undefined}
                         aria-expanded={entry.kind === "directory" ? open : undefined}
-                        draggable={!busy && !renaming}
+                        draggable={permissions.move && !busy && !props.disabled && !renaming}
                         style={{ paddingLeft: `${8 + depth(entry.path) * 14}px` }}
                         onClick={() => activate(entry)}
                         onKeyDown={(event) => {
@@ -384,6 +392,7 @@ export function ProjectExplorer(props: ProjectExplorerProps) {
                         }}
                         onContextMenu={(event) => {
                           event.preventDefault();
+                          if (props.disabled || (!permissions.move && !permissions.remove)) return;
                           if (entry.kind === "directory") {
                             setSelectedFolder(entry.path);
                             setDestinationDirectory(entry.path);
@@ -423,6 +432,7 @@ export function ProjectExplorer(props: ProjectExplorerProps) {
                             />
                           </form>
                         ) : <span className="file-name">{entry.name}</span>}
+                        {props.fileNotes?.[entry.path] ? <small className="file-note" title={props.fileNotes[entry.path]}>{props.fileNotes[entry.path]}</small> : null}
                         {props.rootDocument === entry.path ? <Star className="root-star" aria-label="Root document" /> : null}
                       </div>
                       {isTargetDir ? renderCreateForm() : null}
@@ -449,12 +459,12 @@ export function ProjectExplorer(props: ProjectExplorerProps) {
 
       {contextMenu ? (
         <div ref={contextMenuRef} className="explorer-context-menu" role="menu" style={{ left: contextMenu.x, top: contextMenu.y }}>
-          <button type="button" role="menuitem" onClick={() => {
+          {permissions.move ? <button type="button" role="menuitem" onClick={() => {
             setRenamePath(contextMenu.entry.path);
             setRenameName(contextMenu.entry.name);
             setContextMenu(null);
-          }}><Pencil aria-hidden="true" />Rename</button>
-          <button className="context-danger" type="button" role="menuitem" onClick={() => void deleteEntry(contextMenu.entry)}><Trash2 aria-hidden="true" />Delete</button>
+          }}><Pencil aria-hidden="true" />Rename</button> : null}
+          {permissions.remove ? <button className="context-danger" type="button" role="menuitem" onClick={() => void deleteEntry(contextMenu.entry)}><Trash2 aria-hidden="true" />Delete</button> : null}
         </div>
       ) : null}
     </aside>

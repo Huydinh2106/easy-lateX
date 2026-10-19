@@ -2,6 +2,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { AppSettingKey, AppSettings } from "@easy-latex/shared-types";
+import { normalizeApiUrl } from '../account/ApiConfiguration';
 
 export class SettingsManager {
   private readonly defaults: AppSettings;
@@ -19,7 +20,8 @@ export class SettingsManager {
       explorerWidth: 232,
       pdfWidth: 520,
       problemsHeight: 220,
-      recentProjects: []
+      recentProjects: [],
+      collaborationApiUrl: ''
     };
     this.settings = structuredClone(this.defaults);
   }
@@ -73,6 +75,7 @@ export class SettingsManager {
     const compilerEngine = ["pdflatex", "xelatex", "lualatex"].includes(input.compilerEngine) ? input.compilerEngine : "pdflatex";
     return {
       compilerEngine,
+      collaborationApiUrl: this.apiUrl(input.collaborationApiUrl),
       projectsDirectory: typeof input.projectsDirectory === "string" && path.isAbsolute(input.projectsDirectory)
         ? path.resolve(input.projectsDirectory)
         : this.defaults.projectsDirectory,
@@ -83,6 +86,10 @@ export class SettingsManager {
         ? input.recentProjects.filter((value): value is string => typeof value === "string" && path.isAbsolute(value)).slice(0, 12)
         : []
     };
+  }
+
+  private apiUrl(value: unknown): string {
+    try { return typeof value === 'string' ? normalizeApiUrl(value) : ''; } catch { return ''; }
   }
 
   private boundedNumber(value: number, minimum: number, maximum: number, fallback: number): number {

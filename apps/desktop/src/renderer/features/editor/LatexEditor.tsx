@@ -1,4 +1,4 @@
-import { Annotation, EditorState } from "@codemirror/state";
+import { Annotation, Compartment, EditorState } from "@codemirror/state";
 import { autocompletion } from "@codemirror/autocomplete";
 import { setDiagnostics, type Diagnostic as CodeMirrorDiagnostic } from "@codemirror/lint";
 import { EditorView, keymap } from "@codemirror/view";
@@ -23,14 +23,16 @@ interface LatexEditorProps {
   onChange(value: string): void;
   onSave(): void;
   onCursorLineChange?(line: number): void;
+  readOnly?: boolean;
 }
 
 export const LatexEditor = forwardRef<LatexEditorHandle, LatexEditorProps>(function LatexEditor(
-  { value, path, diagnostics, onChange, onSave, onCursorLineChange },
+  { value, path, diagnostics, onChange, onSave, onCursorLineChange, readOnly = false },
   forwardedRef
 ) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
+  const access = useRef(new Compartment());
   const onChangeRef = useRef(onChange);
   const onSaveRef = useRef(onSave);
   const onCursorLineChangeRef = useRef(onCursorLineChange);
@@ -57,6 +59,7 @@ export const LatexEditor = forwardRef<LatexEditorHandle, LatexEditorProps>(funct
       doc: value,
       extensions: [
         basicSetup,
+        access.current.of([EditorState.readOnly.of(readOnly), EditorView.editable.of(!readOnly)]),
         latexLanguage,
         autocompletion({ override: [completeLatex] }),
         easyLatexEditorTheme,
@@ -83,6 +86,10 @@ export const LatexEditor = forwardRef<LatexEditorHandle, LatexEditorProps>(funct
       viewRef.current = null;
     };
   }, [path]);
+
+  useEffect(() => {
+    viewRef.current?.dispatch({ effects: access.current.reconfigure([EditorState.readOnly.of(readOnly), EditorView.editable.of(!readOnly)]) });
+  }, [readOnly, path]);
 
   useEffect(() => {
     const view = viewRef.current;

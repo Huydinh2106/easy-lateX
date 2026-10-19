@@ -1,0 +1,53 @@
+{
+  "dugite": "3.2.3",
+  "bundledGit": "2.53.0",
+  "source": "https://github.com/desktop/dugite-native/tree/v2.53.0-4",
+  "gitSource": "https://github.com/git/git/tree/v2.53.0",
+  "distributions": {
+    "win32-x64": {
+      "name": "dugite-native-v2.53.0-4098283-windows-x64.tar.gz",
+      "url": "https://github.com/desktop/dugite-native/releases/download/v2.53.0-4/dugite-native-v2.53.0-4098283-windows-x64.tar.gz",
+      "checksum": "7b76bc5c32c0d7c5984efdc2a8a32697cf1e8a43bc55176fbf9869c0ee995130"
+    },
+    "win32-ia32": {
+      "name": "dugite-native-v2.53.0-4098283-windows-x86.tar.gz",
+      "url": "https://github.com/desktop/dugite-native/releases/download/v2.53.0-4/dugite-native-v2.53.0-4098283-windows-x86.tar.gz",
+      "checksum": "8c5e167976735cba3320cf3b92b30b0c845827570747c6c0b52725442d0ab722"
+    },
+    "win32-arm64": {
+      "name": "dugite-native-v2.53.0-4098283-windows-arm64.tar.gz",
+      "url": "https://github.com/desktop/dugite-native/releases/download/v2.53.0-4/dugite-native-v2.53.0-4098283-windows-arm64.tar.gz",
+      "checksum": "1abbeb3a2ce06e9b80e75bb888dce959b6c73bdb11ccc670a01a71d64f4422a5"
+    },
+    "darwin-x64": {
+      "name": "dugite-native-v2.53.0-4098283-macOS-x64.tar.gz",
+      "url": "https://github.com/desktop/dugite-native/releases/download/v2.53.0-4/dugite-native-v2.53.0-4098283-macOS-x64.tar.gz",
+      "checksum": "ae6686718aa34f4140424db16b92a47dcffd6d1f312eb8b5f3b267f7404e2680"
+    },
+    "darwin-arm64": {
+      "name": "dugite-native-v2.53.0-4098283-macOS-arm64.tar.gz",
+      "url": "https://github.com/desktop/dugite-native/releases/download/v2.53.0-4/dugite-native-v2.53.0-4098283-macOS-arm64.tar.gz",
+      "checksum": "f9dc64635a5b62fbd7ad95db73268bbb8912255ac516d65d37bf7af22fcb8ffe"
+    },
+    "linux-x64": {
+      "name": "dugite-native-v2.53.0-4098283-ubuntu-x64.tar.gz",
+      "url": "https://github.com/desktop/dugite-native/releases/download/v2.53.0-4/dugite-native-v2.53.0-4098283-ubuntu-x64.tar.gz",
+      "checksum": "cca76aa31ad9e835e771ee7f55b73934777fbd8d16757a10d307ba06de860901"
+    },
+    "linux-ia32": {
+      "name": "dugite-native-v2.53.0-4098283-ubuntu-x86.tar.gz",
+      "url": "https://github.com/desktop/dugite-native/releases/download/v2.53.0-4/dugite-native-v2.53.0-4098283-ubuntu-x86.tar.gz",
+      "checksum": "b5bfa2bdd0d365c743cbe9e695a5efe4bbd4312a145709843af659495cf1a309"
+    },
+    "linux-arm": {
+      "name": "dugite-native-v2.53.0-4098283-ubuntu-arm.tar.gz",
+      "url": "https://github.com/desktop/dugite-native/releases/download/v2.53.0-4/dugite-native-v2.53.0-4098283-ubuntu-arm.tar.gz",
+      "checksum": "9d858586217c24abed503cd5243fd8b7e3711d9fde5c6d9717d1434022193820"
+    },
+    "linux-arm64": {
+      "name": "dugite-native-v2.53.0-4098283-ubuntu-arm64.tar.gz",
+      "url": "https://github.com/desktop/dugite-native/releases/download/v2.53.0-4/dugite-native-v2.53.0-4098283-ubuntu-arm64.tar.gz",
+      "checksum": "a161f45af4626bb7e0c688854bd4a9aee47cc514bca404cff0a5e3536ef1c0af"
+    }
+  }
+}

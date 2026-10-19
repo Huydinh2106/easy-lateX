@@ -16,10 +16,25 @@
     "compiler:check": "docker run --rm --network none easy-latex-compiler:2026.09.15 -v",
     "compiler:test": "node apps/desktop/test/fixtures/compiler/verify.mjs",
     "package": "npm run package --workspace @easy-latex/desktop",
-    "make": "npm run make --workspace @easy-latex/desktop"
+    "make": "npm run make --workspace @easy-latex/desktop",
+    "api:dev": "npm run dev --workspace @easy-latex/api",
+    "api:start": "npm run start --workspace @easy-latex/api",
+    "supabase:start": "node scripts/collaboration-setup.mjs --configure-only && supabase start",
+    "supabase:stop": "supabase stop",
+    "collaboration:setup": "node scripts/collaboration-setup.mjs",
+    "collaboration:test": "npm run github:test",
+    "collaboration:check": "node scripts/github-check.mjs",
+    "github:migrate": "node scripts/github-migrate-db.mjs",
+    "github:setup": "node scripts/github-setup.mjs",
+    "github:smoke": "npm run smoke --workspace @easy-latex/api --",
+    "github:smoke:webhook": "npm run smoke:webhook --workspace @easy-latex/api --",
+    "github:test": "node scripts/github-test.mjs"
   },
   "engines": {
     "node": ">=22",
     "npm": ">=10"
+  },
+  "devDependencies": {
+    "supabase": "^2.119.0"
   }
 }
