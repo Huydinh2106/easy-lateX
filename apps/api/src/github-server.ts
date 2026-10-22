@@ -9,7 +9,9 @@ import type { LegacyMigration } from './legacy-migration';
 import { ProjectUpdates } from './project-updates';
 const uuid=z.uuid();const sha=z.string().regex(/^[a-f0-9]{40}$/);
 export function createGitHubServer(store:GitHubStore,auth:GitHubAuth,updates=new ProjectUpdates(store.pool),legacy?:LegacyMigration){
-  const app=Fastify({logger:false,bodyLimit:1024*1024});
+  // Node 22 can retain hijacked SSE sockets on close. Clients reconnect after
+  // a deploy; close those connections so shutdown does not wait indefinitely.
+  const app=Fastify({logger:false,bodyLimit:1024*1024,forceCloseConnections:true});
   const users=new WeakMap<object,Account>();const user=(r:object)=>users.get(r)!;
   const id=(v:unknown)=>z.object({id:uuid}).parse(v).id;
   app.setErrorHandler((e,_r,reply)=>{if(e instanceof ApiError)return reply.code(e.statusCode).send({message:e.message,...(e.statusCode===428||e.statusCode===404?{installationUrl:auth.github.installationUrl()}: {})});if(e instanceof z.ZodError)return reply.code(400).send({message:'Invalid request'});return reply.code(500).send({message:'The operation could not be completed. Retry; your draft is preserved.'});});
