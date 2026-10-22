@@ -1,4 +1,4 @@
-import { config } from 'dotenv';
+import { config } from './lib/api-dependencies.mjs';
 import { access } from 'node:fs/promises';
 config({path:['.env.local','.env'],quiet:true});
 const fields=['DATABASE_URL','GITHUB_APP_ID','GITHUB_APP_SLUG','GITHUB_CLIENT_ID','GITHUB_CLIENT_SECRET','GITHUB_CALLBACK_URL','GITHUB_TOKEN_ENCRYPTION_KEY','GITHUB_WEBHOOK_SECRET'];

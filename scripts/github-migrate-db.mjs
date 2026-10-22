@@ -1,5 +1,4 @@
-import { config } from 'dotenv';
-import { Pool } from 'pg';
+import { config, Pool } from './lib/api-dependencies.mjs';
 import { migrateGitHubDatabase } from './lib/github-database.mjs';
 config({path:['.env.local','.env'],quiet:true});
 if(!process.env.DATABASE_URL)throw new Error('DATABASE_URL is required');

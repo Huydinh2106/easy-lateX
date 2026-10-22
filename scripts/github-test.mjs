@@ -1,5 +1,4 @@
-import { config } from 'dotenv';
-import { Pool } from 'pg';
+import { config, Pool } from './lib/api-dependencies.mjs';
 import { readFile, readdir } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { migrateGitHubDatabase } from './lib/github-database.mjs';

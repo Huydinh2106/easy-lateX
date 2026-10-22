@@ -1,6 +1,6 @@
 import { readFile, mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { config } from 'dotenv';
+import { config } from './lib/api-dependencies.mjs';
 
 config({ path: ['.env.local', '.env'], quiet: true });
 const url = new URL(process.argv[2] || '');

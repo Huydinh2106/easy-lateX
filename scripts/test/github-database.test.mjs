@@ -1,8 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { Pool } from 'pg';
-import { config } from 'dotenv';
+import { Pool, config } from '../lib/api-dependencies.mjs';
 import { readFile, readdir } from 'node:fs/promises';
 import { migrateGitHubDatabase } from '../lib/github-database.mjs';
 
