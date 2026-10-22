@@ -100,7 +100,7 @@ async function bootstrap(): Promise<void> {
     const options = {title: kind === 'files' ? 'Add Files to Shared Project' : 'Add Folder to Shared Project', properties: kind === 'files' ? ['openFile', 'multiSelections'] as Array<'openFile' | 'multiSelections'> : ['openDirectory'] as Array<'openDirectory'>};
     const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
     return result.canceled ? [] : result.filePaths;
-  });
+  }, () => settings.get('projectsDirectory'));
   registerAccountIpc(accounts, shared, getWindow, async value=>{
     const url=normalizeApiUrl(value);
     if((await accounts!.state()).account)throw new Error('Sign out before changing the collaboration server');

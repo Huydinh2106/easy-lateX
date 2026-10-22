@@ -38,6 +38,7 @@ export interface DoneInput { fileId: string; token: string; baseVersion: number;
 export interface SharedProjectInput { name: string; files?: ProjectFileInput[] | undefined; directories?: string[] | undefined; requestId?: string | undefined; }
 export interface ProjectCollaborationLink { workspacePath: string; projectId: string; }
 export interface ProjectUpdateEvent { projectId: string; type: "connected" | "changed" | "disconnected"; commitSha?: string | null; }
+export interface SharedProjectSnapshot { files: SharedFile[]; directories: string[]; workspacePath: string; }
 export interface CollaborationApi {
   legacyConfirmation(email:string):Promise<void>;
   linkLegacy(email:string,code:string):Promise<void>;
@@ -50,6 +51,7 @@ export interface CollaborationApi {
   projects(): Promise<SharedProject[]>;
   create(input: SharedProjectInput): Promise<SharedProject>;
   files(projectId: string): Promise<SharedFile[]>;
+  snapshot(projectId: string): Promise<SharedProjectSnapshot>;
   createFile(projectId: string, path: string): Promise<SharedFile>;
   directories(projectId: string): Promise<string[]>;
   createDirectory(projectId: string, path: string): Promise<string>;

@@ -1228,7 +1228,7 @@ button.shared-project-row:hover { background: var(--color-bg-hover); }
 .shared-project-row span { color: var(--color-text-secondary); }
 .shared-error { display: flex; justify-content: space-between; gap: var(--space-3); margin: 0; padding: var(--space-3) var(--space-4); color: var(--color-danger); background: var(--color-danger-soft); }
 .shared-error button { border: 0; background: transparent; color: inherit; cursor: pointer; }
-.shared-notice { margin: 0; padding: var(--space-2) var(--space-4); color: var(--color-text-secondary); background: var(--color-bg-subtle); font-size: 12px; }
+.shared-notice { margin: 0; padding: var(--space-2) var(--space-4); color: var(--color-text-secondary); background: var(--color-bg-subtle); font-size: 12px; overflow-wrap: anywhere; }
 .shared-file-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--space-2); padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--color-border-default); }
 .shared-mode-switch {
   position: relative;

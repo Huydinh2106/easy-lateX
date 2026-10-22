@@ -98,8 +98,11 @@ identity, and keeps the application session in the OS key store.
 Only one person can Edit each file, while different files can be edited in
 parallel. Done saves locally, reserves a publication turn, commits and pushes to
 GitHub, then reports success only after the backend verifies the commit. SSE
-carries confirmed commit SHAs; Git updates preserve local drafts. Compilation
-still runs on the user's machine.
+carries confirmed commit SHAs; desktops automatically update their project files.
+Shared edits save directly into the project folder. Opening a shared project
+replaces outside local edits with the published GitHub version before Edit is
+available. Easy LaTeX recovery drafts stay separate. Compilation still runs on
+the user's machine.
 
 Configure the GitHub App and additive migration using
 [the collaboration guide](docs/COLLABORATION.md) and `.env.example`. Start the API

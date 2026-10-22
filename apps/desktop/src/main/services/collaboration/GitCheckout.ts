@@ -2,8 +2,9 @@ import { spawn } from 'node:child_process';
 import { mkdir, mkdtemp, rm, readFile, writeFile, rename } from 'node:fs/promises';
 import path from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
-import type { Account, GitRepository, ProjectFileInput } from '@easy-latex/shared-types';
+import type { Account, GitFileMetadata, GitRepository, ProjectFileInput } from '@easy-latex/shared-types';
 import { gitRuntime } from '../git/GitRuntime';
+import { validateSharedDirectory, validateSourcePath } from './paths';
 interface Credential {token:string;url:string;expires_at:string;}
 export function gitBlobSha(bytes:Buffer):string {return createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex');}
 /** Managed object store and immutable checkouts. Drafts never live in a Git worktree. */
@@ -47,6 +48,18 @@ export class GitCheckout {
     return checkout;
   }
   async readBlob(sha:string):Promise<Buffer>{if(!/^[a-f0-9]{40}$/.test(sha))throw new Error('Invalid Git blob');return this.run(['cat-file','blob',sha]);}
+  async matches(head:string|null,files:Pick<GitFileMetadata,'path'|'blobSha'>[]):Promise<boolean>{
+    if(!head)return files.length===0;
+    if(!/^[a-f0-9]{40}$/.test(head))throw new Error('Invalid Git version');
+    const entries=(await this.run(['ls-tree','-rz',head])).toString('utf8').split('\0').filter(Boolean);
+    const blobs=new Map<string,string>();
+    for(const entry of entries){const tab=entry.indexOf('\t');const [mode,type,sha]=entry.slice(0,tab).split(' ');if(mode==='100644'&&type==='blob'&&sha)blobs.set(entry.slice(tab+1),sha);}
+    // The backend intentionally excludes unsupported/internal Git paths.
+    return files.every(file=>blobs.get(file.path)===file.blobSha)&&[...blobs.keys()].every(p=>files.some(file=>file.path===p)||!this.supportedPath(p));
+  }
+  private supportedPath(value:string):boolean{
+    try{if(value.endsWith('/.gitkeep'))validateSharedDirectory(value.slice(0,-9));else validateSourcePath(value,true);return !value.split('/').some(p=>/^(build|dist|out|cache|\.env.*)$/i.test(p))&&!/^(credentials|secrets)\./i.test(path.posix.basename(value));}catch{return false;}
+  }
   async contains(sha:string):Promise<boolean>{try{await this.run(['cat-file','-e',sha]);return true;}catch{return false;}}
   async commit(base:string|null,entries:ProjectFileInput[],requestId:string):Promise<string>{
     if(!/^[a-zA-Z0-9-]+$/.test(requestId)||base&&!/^[a-f0-9]{40}$/.test(base))throw new Error('Invalid publication');

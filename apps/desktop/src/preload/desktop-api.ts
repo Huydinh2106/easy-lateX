@@ -61,6 +61,7 @@ export const desktopApi: DesktopApi = {
     projects: () => ipcRenderer.invoke("collaboration:action", "projects"),
     create: input => ipcRenderer.invoke("collaboration:action", "create", input),
     files: projectId => ipcRenderer.invoke("collaboration:action", "files", projectId),
+    snapshot: projectId => ipcRenderer.invoke("collaboration:action", "snapshot", projectId),
     createFile: (projectId, path) => ipcRenderer.invoke("collaboration:action", "createFile", {projectId, path}),
     directories: projectId => ipcRenderer.invoke("collaboration:action", "directories", projectId),
     createDirectory: (projectId, path) => ipcRenderer.invoke("collaboration:action", "createDirectory", {projectId, path}),

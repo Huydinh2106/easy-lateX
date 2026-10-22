@@ -62,9 +62,13 @@ project dashboard with a separate shared-project hub.
   backend-scoped folder binding keeps its identity across restart and sign-out;
   bound folders always open through collaboration. A stable, owner-scoped
   creation request ID makes retries and concurrent activation reuse one project.
-- Published sources and history are read from an isolated desktop Git checkout
-  backed by GitHub. PostgreSQL holds coordination metadata. The original local
-  folder is retained; drafts stay separate from managed immutable checkouts.
+- Shared source files are edited directly in the bound project folder. Every
+  open refreshes published files from GitHub, overwriting edits made outside
+  Easy LaTeX. Received publications update local files automatically while
+  preserving a different file with an active local Edit lease. The real folder
+  path is visible. PostgreSQL holds coordination metadata; Git transport and
+  Easy LaTeX recovery drafts remain separate. Edit stays unavailable until
+  synchronization succeeds. Saves show actual completion or failure.
 - Invitations appear on the same Projects dashboard. Both project types use the
   same editor frame, toolbar, file explorer, outline, resizers, Problems and PDF.
   Shared files add View/Edit/Done and server-enforced exclusive editing. Shared

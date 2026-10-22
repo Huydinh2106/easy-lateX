@@ -9,11 +9,40 @@ vi.mock('../src/renderer/features/project/FileOutline',()=>({FileOutline:()=>nul
 import { SharedWorkspace } from '../src/renderer/features/collaboration/SharedWorkspace';
 const account:Account={id:'owner',email:'owner@example.test',displayName:'Owner'};
 const file:SharedFile={id:'file',projectId:'project',path:'main.tex',content:'Published source',version:1,encoding:'utf8',updatedAt:'2026-10-04T00:00:00Z',editor:null};
-const api={onProjectUpdate:vi.fn<CollaborationApi['onProjectUpdate']>(),files:vi.fn(),directories:vi.fn(),createDirectory:vi.fn(),importFiles:vi.fn(),importFolder:vi.fn(),importDropped:vi.fn(),draft:vi.fn(),saveDraft:vi.fn(),clearDraft:vi.fn(),acquire:vi.fn(),renew:vi.fn(),release:vi.fn(),done:vi.fn(),history:vi.fn(),createFile:vi.fn(),invite:vi.fn()};
-beforeEach(()=>{vi.resetAllMocks();api.onProjectUpdate.mockReturnValue(vi.fn());api.files.mockResolvedValue([file]);api.directories.mockResolvedValue([]);api.draft.mockResolvedValue(null);api.saveDraft.mockResolvedValue(undefined);api.clearDraft.mockResolvedValue(undefined);api.release.mockResolvedValue(undefined);api.acquire.mockResolvedValue({token:'lease',expiresAt:new Date(Date.now()+90_000).toISOString(),file:{...file,editor:{id:account.id,displayName:'Owner',expiresAt:new Date(Date.now()+90_000).toISOString()}}});api.done.mockResolvedValue({...file,content:'Changed source',version:2});Object.defineProperty(window,'desktop',{value:{collaboration:api,file:{pathForDroppedFile:()=>'/tmp/plot.png'}},configurable:true});});
+const api={snapshot:vi.fn(),onProjectUpdate:vi.fn<CollaborationApi['onProjectUpdate']>(),files:vi.fn(),directories:vi.fn(),createDirectory:vi.fn(),importFiles:vi.fn(),importFolder:vi.fn(),importDropped:vi.fn(),draft:vi.fn(),saveDraft:vi.fn(),clearDraft:vi.fn(),acquire:vi.fn(),renew:vi.fn(),release:vi.fn(),done:vi.fn(),history:vi.fn(),createFile:vi.fn(),invite:vi.fn()};
+beforeEach(()=>{vi.resetAllMocks();api.snapshot.mockImplementation(async()=>({files:await api.files() as SharedFile[],directories:await api.directories() as string[],workspacePath:'/projects/Paper'}));api.onProjectUpdate.mockReturnValue(vi.fn());api.files.mockResolvedValue([file]);api.directories.mockResolvedValue([]);api.draft.mockResolvedValue(null);api.saveDraft.mockResolvedValue(undefined);api.clearDraft.mockResolvedValue(undefined);api.release.mockResolvedValue(undefined);api.acquire.mockResolvedValue({token:'lease',expiresAt:new Date(Date.now()+90_000).toISOString(),file:{...file,editor:{id:account.id,displayName:'Owner',expiresAt:new Date(Date.now()+90_000).toISOString()}}});api.done.mockResolvedValue({...file,content:'Changed source',version:2});Object.defineProperty(window,'desktop',{value:{collaboration:api,file:{pathForDroppedFile:()=>'/tmp/plot.png'}},configurable:true});});
 afterEach(()=>{cleanup();vi.useRealTimers();});
 const open=async(role:'owner'|'editor'|'viewer'='owner')=>{render(<SharedWorkspace project={{id:'project',name:'Shared paper',role}} account={account} onClose={()=>undefined}/>);await waitFor(()=>expect(screen.getByLabelText('Source')).toHaveValue('Published source'));};
 describe('Shared file access in the editor',()=>{
+  it('uses one snapshot and displays the actual working folder',async()=>{
+    await open();expect(api.snapshot).toHaveBeenCalledWith('project');
+    expect(screen.getByText('/projects/Paper')).toBeInTheDocument();
+  });
+  it('blocks Edit after a synchronization error until a successful refresh',async()=>{
+    api.snapshot.mockRejectedValueOnce(new Error('GitHub unavailable'));
+    render(<SharedWorkspace project={{id:'project',name:'Paper',role:'owner'}} account={account} onClose={()=>undefined}/>);
+    await screen.findByText('GitHub unavailable');expect(screen.getByRole('switch',{name:'Edit mode'})).toBeDisabled();
+    fireEvent.click(screen.getByRole('button',{name:'Retry synchronization'}));
+    await waitFor(()=>expect(screen.getByRole('switch',{name:'Edit mode'})).toBeEnabled());
+  });
+  it('does not publish when saving the current source file fails',async()=>{
+    await open();fireEvent.click(screen.getByRole('switch',{name:'Edit mode'}));
+    await waitFor(()=>expect(screen.getByLabelText('Source')).not.toHaveAttribute('readonly'));
+    api.saveDraft.mockRejectedValue(new Error('Disk is full'));
+    fireEvent.change(screen.getByLabelText('Source'),{target:{value:'Do not lose this'}});
+    fireEvent.click(screen.getByRole('button',{name:'Done'}));
+    await screen.findByText('Save failed');expect(api.done).not.toHaveBeenCalled();
+    expect(screen.getByLabelText('Source')).toHaveValue('Do not lose this');
+  });
+  it('continues renewing Edit while the window is hidden',async()=>{
+    vi.useFakeTimers({toFake:['setInterval','clearInterval']});api.renew.mockResolvedValue({expiresAt:new Date(Date.now()+120_000).toISOString()});
+    await open();fireEvent.click(screen.getByRole('switch',{name:'Edit mode'}));
+    await waitFor(()=>expect(screen.getByLabelText('Source')).not.toHaveAttribute('readonly'));
+    Object.defineProperty(document,'visibilityState',{value:'hidden',configurable:true});
+    try{await act(()=>document.dispatchEvent(new Event('visibilitychange')));await act(async()=>{await vi.advanceTimersByTimeAsync(20_000);});
+      expect(api.renew).toHaveBeenCalledWith('file','lease');expect(api.release).not.toHaveBeenCalled();
+    }finally{Object.defineProperty(document,'visibilityState',{value:'visible',configurable:true});}
+  });
   it('loads published changes on push and reconnect without polling while idle',async()=>{
     vi.useFakeTimers({toFake:['setInterval','clearInterval']});
     const unsubscribe=vi.fn();api.onProjectUpdate.mockReturnValue(unsubscribe);
@@ -34,7 +63,7 @@ describe('Shared file access in the editor',()=>{
     await open();fireEvent.click(screen.getByRole('switch',{name:'Edit mode'}));
     await waitFor(()=>expect(screen.getByLabelText('Source')).not.toHaveAttribute('readonly'));
     fireEvent.change(screen.getByLabelText('Source'),{target:{value:'My unpublished work'}});
-    api.files.mockResolvedValue([file,{...file,id:'second',path:'chapter.tex',version:2,content:'New chapter'}]);
+    api.files.mockResolvedValue([{...file,editor:{id:account.id,displayName:'Owner',expiresAt:new Date(Date.now()+90_000).toISOString()}},{...file,id:'second',path:'chapter.tex',version:2,content:'New chapter'}]);
     act(()=>{api.onProjectUpdate.mock.calls[0]![1]({projectId:'project',type:'changed'});});
     await screen.findByRole('treeitem',{name:/chapter.tex/});
     expect(screen.getByLabelText('Source')).toHaveValue('My unpublished work');
@@ -54,7 +83,7 @@ describe('Shared file access in the editor',()=>{
     expect(api.importFiles).toHaveBeenCalledWith('project','figures');
   });
   it('uploads a folder without discarding an active edit',async()=>{
-    api.importFolder.mockImplementation(()=>{api.files.mockResolvedValue([file,{...file,id:'chapter',path:'chapters/intro.tex',content:'Chapter'}]);api.directories.mockResolvedValue(['chapters','chapters/empty']);return Promise.resolve(['chapters/intro.tex','chapters/empty']);});
+    api.importFolder.mockImplementation(()=>{api.files.mockResolvedValue([{...file,editor:{id:account.id,displayName:'Owner',expiresAt:new Date(Date.now()+90_000).toISOString()}},{...file,id:'chapter',path:'chapters/intro.tex',content:'Chapter'}]);api.directories.mockResolvedValue(['chapters','chapters/empty']);return Promise.resolve(['chapters/intro.tex','chapters/empty']);});
     await open();fireEvent.click(screen.getByRole('switch',{name:'Edit mode'}));await waitFor(()=>expect(screen.getByLabelText('Source')).not.toHaveAttribute('readonly'));
     fireEvent.change(screen.getByLabelText('Source'),{target:{value:'Work in progress'}});fireEvent.click(screen.getByRole('button',{name:'Add folder'}));
     await screen.findByText('chapters');expect(api.importFolder).toHaveBeenCalledWith('project','');expect(screen.getByLabelText('Source')).toHaveValue('Work in progress');expect(api.release).not.toHaveBeenCalled();

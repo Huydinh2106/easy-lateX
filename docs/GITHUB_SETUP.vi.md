@@ -213,12 +213,13 @@ Có thể chạy dev trên hai máy hoặc dùng bản đóng gói đúng hệ �
 1. A là chủ project; trong **Collaborate**, mời đúng GitHub username của B, chọn **Can edit**. Không nhập email/display name.
 2. Trên máy B, đăng nhập GitHub B trong trình duyệt hệ thống. Cài App nếu được yêu cầu, vào **Projects**, chấp nhận lời mời. Nếu việc chấp nhận trong app bị GitHub từ chối, chấp nhận trên thông báo/email GitHub rồi quay lại làm mới Projects; lưu lại lỗi để sửa tích hợp.
 3. A và B mở cùng file rồi bấm Edit gần đồng thời: chỉ một người được sửa.
-4. Mỗi người Edit một file khác nhau, sửa rồi Done đồng thời: cả hai thay đổi phải lên GitHub. Nếu một lượt đang bận, thử lại sau lượt trước.
+4. Mỗi người Edit một file khác nhau, sửa rồi Done đồng thời: cả hai thay đổi phải lên GitHub. Desktop tự chờ thử lại có giới hạn khi lượt đang bận; nếu hết lượt thử, giữ bản nháp và dùng Retry Done.
 5. Khi B giữ bản nháp, A xuất bản file khác: file đã xuất bản cập nhật, bản nháp B còn nguyên.
 6. Dùng GitHub web sửa một file khác và commit. Trong settings GitHub App, xem **Advanced → Recent deliveries**, kiểm tra webhook trả 2xx và desktop nhận thay đổi. Chỉ status 2xx chưa đủ: phải kiểm tra nội dung thực tế đã cập nhật.
 7. Ngắt mạng khi đang sửa, nối lại: bản nháp phải còn; đồng bộ và lấy Edit mới trước khi xuất bản.
 8. Dừng API trong lúc Done rồi khởi động lại, retry: đối chiếu GitHub để kiểm tra không tạo commit trùng. Thời điểm lỗi ngẫu nhiên không bảo đảm tái hiện đúng cửa sổ push-thành-công/mất-phản-hồi; cần fault injection có kiểm soát để chứng minh trường hợp đó với GitHub thật.
 9. Trên repo thử, A vào **Settings → Collaborators**, gỡ B: B không còn được Edit/Done; SSE kiểm tra quyền định kỳ tối đa khoảng 60 giây. Thử revoke quyền App trong GitHub Applications rồi đăng nhập lại.
+10. Kiểm tra đường dẫn Project folder trong workspace: sửa và lưu bằng Easy LaTeX phải thay đổi file tại đúng thư mục đó. Thoát dự án, sửa một file đã xuất bản bằng công cụ ngoài rồi mở lại: file phải tự trở về nội dung GitHub trước khi được Edit. Bản nháp tạo trong Easy LaTeX phải còn trong phần phục hồi riêng. Chỉ thử bước ghi đè với dữ liệu mẫu.
 
 GitHub private repository thuộc cá nhân cấp quyền write cho collaborator, nên UI hiện chỉ mời **Can edit**. Muốn read-only thật cần mở rộng cơ chế repository/organization. Đây là giới hạn được thể hiện, không phải ô cấu hình đang bị thiếu. [Quyền repository cá nhân](https://docs.github.com/en/account-and-profile/reference/permission-levels-for-a-personal-account-repository).
 

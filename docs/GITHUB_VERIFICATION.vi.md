@@ -1,5 +1,13 @@
 # Kiểm chứng GitHub thật — cập nhật 19/10/2026
 
+## Cập nhật code local ngày 21/10/2026
+
+Dự án chung dùng thư mục làm việc thật, tự cập nhật file đã xuất bản từ GitHub mỗi lần mở và trước khi nhận Edit. Thay đổi local từ công cụ ngoài được ghi đè theo quy tắc sản phẩm mới. Save ghi cả file trong thư mục lẫn bản nháp phục hồi riêng. SSE cập nhật các file khác mà không thay file đang có phiên Edit hợp lệ trên máy. Không thay cơ chế khóa backend, kiểm tra quyền, xác nhận commit hoặc credential fencing.
+
+Đã chạy lint, typecheck, 128 unit/UI test và 17 integration test PostgreSQL trong database tạm với GitHub giả lập; build API và đóng gói desktop macOS arm64 thành công. `npm test` bỏ qua 47 bài opt-in; 17 bài GitHub/PostgreSQL trong số đó đã chạy riêng qua `npm run github:test`. 17 bài legacy PostgreSQL và 13 bài Docker chưa chạy trong lượt này. Test mới dùng filesystem thật để kiểm tra ghi file, ghi đè ngoài ứng dụng, xóa file đã bị xóa trên remote, giữ file đang Edit, chặn symlink và giữ dữ liệu khi đồng bộ thất bại; transport GitHub trong test desktop vẫn giả lập.
+
+Chưa kiểm thử luồng mới bằng hai tài khoản GitHub thật, chưa kiểm tra UI native trực quan hoặc máy sạch. Các bằng chứng live ngày 19/10 bên dưới thuộc phiên bản trước khi đổi thư mục làm việc. Chưa đo benchmark polling 10 phút và chưa thay polling dashboard. Không có repository thật, lời mời thật hoặc quyền GitHub nào được thay đổi trong lượt cập nhật này.
+
 Đã tạo GitHub App `easy-latex-b1640cf2` thuộc `Huydinh2106` bằng manifest, sau khi chủ tài khoản đăng nhập và đồng ý. App ID: `5353934`. Secret, khóa mã hóa và PEM được giữ trong cấu hình backend bị Git ignore; không ghi vào tài liệu này.
 
 ## Kết quả đã xác minh

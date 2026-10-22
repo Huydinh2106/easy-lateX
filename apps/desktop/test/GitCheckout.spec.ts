@@ -14,6 +14,10 @@ describe('Desktop Git publication',()=>{
       const image=Buffer.from([0,255,1,2]);
       const initial=await checkout.commit(null,[{path:'main.tex',content:'Original'},{path:'figures/plot.png',content:image.toString('base64'),encoding:'base64'},{path:'empty/.gitkeep',content:''}],'request-1');
       const snapshot=await checkout.materialize(initial);expect(await readFile(path.join(snapshot,'main.tex'),'utf8')).toBe('Original');expect(await readFile(path.join(snapshot,'figures/plot.png'))).toEqual(image);
+      const metadata=[{path:'main.tex',blobSha:gitBlobSha(Buffer.from('Original'))},{path:'figures/plot.png',blobSha:gitBlobSha(image)},{path:'empty/.gitkeep',blobSha:gitBlobSha(Buffer.alloc(0))}];
+      expect(await checkout.matches(initial,metadata)).toBe(true);
+      expect(await checkout.matches(initial,metadata.slice(1))).toBe(false);
+      expect(await checkout.matches(initial,[...metadata.slice(1),{path:'main.tex',blobSha:gitBlobSha(Buffer.from('Stale'))}])).toBe(false);
       const second=await checkout.commit(initial,[{path:'main.tex',content:'Edited'}],'request-2');
       expect(await checkout.commit(initial,[{path:'main.tex',content:'Edited'}],'request-2')).toBe(second);
       const gitdir=path.join(checkout.root,'objects.git');

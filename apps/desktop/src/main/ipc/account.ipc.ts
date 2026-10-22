@@ -43,6 +43,7 @@ export function registerAccountIpc(accounts:AccountManager,shared:CollaborationM
       case 'projects': return shared.projects();
       case 'create': return shared.create(z.object({name:z.string().trim().min(1).max(80),requestId:uuid.optional(),directories:z.array(z.string().max(512)).max(1000).optional(),files:z.array(z.object({path:z.string().max(512),content:z.string().max(14*1024*1024),encoding:z.enum(['utf8','base64']).optional()})).max(1000).optional()}).parse(value));
       case 'files': return shared.files(uuid.parse(value));
+      case 'snapshot': return shared.snapshot(uuid.parse(value));
       case 'createFile': {const v=z.object({projectId:uuid,path:z.string().max(512)}).parse(value);return shared.createFile(v.projectId,v.path);}
       case 'directories': return shared.directories(uuid.parse(value));
       case 'createDirectory': {const v=z.object({projectId:uuid,path:z.string().max(512)}).parse(value);return shared.createDirectory(v.projectId,v.path);}

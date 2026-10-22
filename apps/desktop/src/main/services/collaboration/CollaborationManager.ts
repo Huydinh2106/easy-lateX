@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile, rename, unlink, mkdtemp, rm, realpath, lstat } from 'node:fs/promises';
 import path from 'node:path';
-import type { CollaborationApi, CompileResult, LatexEngine, ProjectFileInput, SharedProject, SharedProjectInput, DoneInput, SharedFile, GitFileMetadata, PublishTicket, PublishChange } from '@easy-latex/shared-types';
+import type { CollaborationApi, CompileResult, EditLease, LatexEngine, ProjectFileInput, SharedProject, SharedProjectInput, SharedProjectSnapshot, DoneInput, SharedFile, GitFileMetadata, PublishTicket, PublishChange } from '@easy-latex/shared-types';
 import type { AccountManager } from '../account/AccountManager';
 import { FileManager } from '../filesystem/FileManager';
 import { DockerLatexCompiler } from '../compiler/DockerLatexCompiler';
@@ -10,17 +10,10 @@ import { ProjectLinks } from './ProjectLinks';
 import { ProjectEventStream } from './ProjectEventStream';
 import { GitCheckout, gitBlobSha } from './GitCheckout';
 import { normalizeApiUrl } from '../account/ApiConfiguration';
+import { SharedWorkingDirectory } from './SharedWorkingDirectory';
 
-export function validateSharedDirectory(value:string): string {
-  const parts=value.split('/');
-  if (!value || value.length>512 || value.includes('\\') || ([...value].some(c => c.charCodeAt(0) < 32) || /[<>:"|?*]/.test(value)) || parts.some(p=>!p || p==='.' || p==='..' || ['.git','.easy-latex','node_modules'].includes(p) || /[. ]$/.test(p) || /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(p))) throw new Error('Invalid project path');
-  return value;
-}
-export function validateSourcePath(value:string, attachments=false): string {
-  validateSharedDirectory(value);
-  if (!(attachments?/\.(tex|bib|sty|cls|bst|ltx|md|txt|png|jpg|jpeg|svg|pdf|eps|otf|ttf|woff|woff2)$/i:/\.(tex|bib|sty|cls|bst|ltx|md|txt)$/i).test(value)) throw new Error(`Invalid source file path: ${value}. This file type is not supported for collaboration.`);
-  return value;
-}
+import { validateSharedDirectory, validateSourcePath } from './paths';
+export { validateSharedDirectory, validateSourcePath } from './paths';
 export class CollaborationManager implements CollaborationApi {
   private readonly compiler = new DockerLatexCompiler(process.env.EASY_LATEX_DOCKER_IMAGE?.trim() || undefined);
   private building = false;
@@ -29,7 +22,12 @@ export class CollaborationManager implements CollaborationApi {
   private readonly operations=new Map<string,Promise<unknown>>();
   private readonly activations=new Map<string,Promise<SharedProject>>();
   private readonly eventStreams=new Set<ProjectEventStream>();
-  constructor(private readonly accounts: AccountManager, private apiUrl: string | undefined, private readonly dataDirectory: string, private readonly artifacts: ArtifactRegistry, private readonly chooseSource?:()=>Promise<string|null>, private readonly currentSource?:()=>string, private readonly chooseItems?:(kind:'files'|'folder')=>Promise<string[]>) {
+  private readonly edits=new Map<string,EditLease>();
+  private readonly folders=new Map<string,SharedWorkingDirectory>();
+  private readonly snapshots=new Map<string,Promise<SharedProjectSnapshot>>();
+  private readonly storageDirectories=new Map<string,Promise<string>>();
+  private epoch=0;
+  constructor(private readonly accounts: AccountManager, private apiUrl: string | undefined, private readonly dataDirectory: string, private readonly artifacts: ArtifactRegistry, private readonly chooseSource?:()=>Promise<string|null>, private readonly currentSource?:()=>string, private readonly chooseItems?:(kind:'files'|'folder')=>Promise<string[]>, private readonly projectsDirectory?:()=>Promise<string>) {
     this.projectLinks=new ProjectLinks(path.join(dataDirectory,'project-links.json'));
     this.apiUrl=normalizeApiUrl(apiUrl??'');
   }
@@ -38,12 +36,37 @@ export class CollaborationManager implements CollaborationApi {
   onProjectUpdate:CollaborationApi['onProjectUpdate']=(projectId,callback)=>{
     if(!this.apiUrl)throw new Error('Collaboration backend is not configured');
     const apiUrl=this.apiUrl;
-    const stream=new ProjectEventStream(apiUrl,projectId,()=>this.accounts.accessToken(apiUrl),callback);
+    const stream=new ProjectEventStream(apiUrl,projectId,()=>this.accounts.accessToken(apiUrl),event=>{
+      if(event.type==='disconnected')for(const [id,edit] of this.edits)if(edit.file.projectId===projectId)this.edits.delete(id);
+      callback(event);
+    });
     this.eventStreams.add(stream);
     void stream.run().finally(()=>this.eventStreams.delete(stream));
-    return()=>{stream.stop();this.eventStreams.delete(stream);};
+    return()=>{stream.stop();this.eventStreams.delete(stream);for(const [id,edit] of this.edits)if(edit.file.projectId===projectId)this.edits.delete(id);};
   };
-  stopUpdates():void {for(const stream of this.eventStreams)stream.stop();this.eventStreams.clear();}
+  stopUpdates():void {this.epoch++;for(const stream of this.eventStreams)stream.stop();this.eventStreams.clear();this.metadata.clear();this.edits.clear();this.folders.clear();this.snapshots.clear();}
+  private checkEpoch(epoch:number):void {if(epoch!==this.epoch)throw new Error('Account or server changed. Reopen the project.');}
+  private storageDirectory():Promise<string>{
+    if(!this.apiUrl)throw new Error('Collaboration backend is not configured');
+    const backend=this.apiUrl.replace(/\/$/,'');
+    let running=this.storageDirectories.get(backend);
+    if(!running){
+      running=(async()=>{
+        // Keep existing receipts/drafts in place for the original server. Other
+        // backends get a separate namespace, including after app restart.
+        await mkdir(this.dataDirectory,{recursive:true,mode:0o700});
+        const filename=path.join(this.dataDirectory,'storage-backend.json');
+        try{await writeFile(filename,JSON.stringify({backend}),{flag:'wx',mode:0o600});}
+        catch(error){if((error as NodeJS.ErrnoException).code!=='EEXIST')throw error;}
+        const value:unknown=JSON.parse(await readFile(filename,'utf8'));
+        if(!value||typeof value!=='object'||!('backend' in value)||typeof value.backend!=='string')throw new Error('Invalid collaboration storage identity');
+        return value.backend===backend?this.dataDirectory:path.join(this.dataDirectory,'backends',createHash('sha256').update(backend).digest('hex'));
+      })();
+      this.storageDirectories.set(backend,running);
+      void running.catch(()=>this.storageDirectories.delete(backend));
+    }
+    return running;
+  }
   private async saveJson(filename:string,value:unknown):Promise<void>{
     await mkdir(path.dirname(filename),{recursive:true,mode:0o700});const temporary=`${filename}.${randomUUID()}.tmp`;
     await writeFile(temporary,JSON.stringify(value),{mode:0o600});await rename(temporary,filename);
@@ -51,11 +74,14 @@ export class CollaborationManager implements CollaborationApi {
   private async request<T>(route:string,body?:unknown):Promise<T> {
     if(!this.apiUrl) throw new Error('Collaboration backend is not configured');
     const apiUrl=this.apiUrl;
+    const epoch=this.epoch;
     const token=await this.accounts.accessToken(apiUrl);
+    this.checkEpoch(epoch);
     let response:Response;
     try { response=await fetch(`${apiUrl.replace(/\/$/,'')}${route}`,{method:body===undefined?'GET':'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},...(body!==undefined?{body:JSON.stringify(body)}:{}),redirect:'error',signal:AbortSignal.timeout(15_000)}); }
     catch { throw new Error('Could not connect. Your local draft is preserved.'); }
     const value:unknown=await response.json();
+    this.checkEpoch(epoch);
     if(!response.ok) { if(value && typeof value==='object' && 'installationUrl' in value && typeof value.installationUrl==='string')await this.accounts.openInstallation(value.installationUrl); const message=value && typeof value==='object' && 'message' in value && typeof value.message==='string'?value.message:'Collaboration request failed';throw new Error(message); }
     return value as T;
   }
@@ -87,7 +113,7 @@ export class CollaborationManager implements CollaborationApi {
       if(!existing)throw new Error('This project already uses collaboration. Sign in with an account that has access.');
       return existing;
     }
-    const input=await this.snapshot(source);
+    const input=await this.exportSnapshot(source);
     const account=(await this.accounts.state()).account;
     if(!account)throw new Error('Please sign in to enable collaboration');
     // A stable request ID prevents a second project after an uncertain network response.
@@ -99,7 +125,7 @@ export class CollaborationManager implements CollaborationApi {
     return project;
   }
   private excluded(filePath:string):boolean{return filePath.split('/').some(p=>p.startsWith('.')||['build','dist','out','cache','node_modules'].includes(p.toLowerCase()))||/^(tokens?|credentials?|secrets?|passwords?)\./i.test(path.basename(filePath));}
-  private async snapshot(source:string):Promise<SharedProjectInput>{
+  private async exportSnapshot(source:string):Promise<SharedProjectInput>{
     const files=new FileManager();await files.setWorkspace(source);
     const tree=await files.list();const inputs:ProjectFileInput[]=[];const directories:string[]=[];
     const allPaths=new Set(tree.map(f=>f.path));
@@ -120,10 +146,12 @@ export class CollaborationManager implements CollaborationApi {
   }
   projects:CollaborationApi['projects']=()=>this.request('/projects');
   private async checkout(projectId:string,requestId?:string):Promise<GitCheckout>{
+    const epoch=this.epoch;
     const project=await this.request<SharedProject>(`/projects/${projectId}`);
     const account=(await this.accounts.state()).account;
     if(!account||!project.repository)throw new Error('Please sign in and retry repository activation');
-    return new GitCheckout(this.dataDirectory,account,projectId,project.repository,write=>this.request(`/projects/${projectId}/git-credentials`,{write,...(requestId?{requestId}:{})}));
+    const directory=await this.storageDirectory();this.checkEpoch(epoch);
+    return new GitCheckout(directory,account,projectId,project.repository,write=>{this.checkEpoch(epoch);return this.request(`/projects/${projectId}/git-credentials`,{write,...(requestId?{requestId}:{})});});
   }
   private async serial<T>(id:string,fn:()=>Promise<T>):Promise<T>{
     const previous=this.operations.get(id)??Promise.resolve();
@@ -139,7 +167,7 @@ export class CollaborationManager implements CollaborationApi {
     const initialId=this.stableId(`initial:${project.id}:${requestId}`);
     const account=(await this.accounts.state()).account;
     if(!account)throw new Error('Please sign in');
-    const activationFile=path.join(this.dataDirectory,'activations',account.id,`${project.id}.json`);
+    const activationFile=path.join(await this.storageDirectory(),'activations',account.id,`${project.id}.json`);
     try{entries=JSON.parse(await readFile(activationFile,'utf8')) as ProjectFileInput[];}
     catch(e){if((e as NodeJS.ErrnoException).code!=='ENOENT')throw e;entries=this.withDirectories(entries,input.directories??[]);await this.saveJson(activationFile,entries);}
     await this.serial(project.id,()=>this.publish(project.id,initialId,entries,{}));
@@ -165,9 +193,10 @@ export class CollaborationManager implements CollaborationApi {
   private async hydrate(checkout:GitCheckout,file:GitFileMetadata):Promise<SharedFile>{
     const bytes=await checkout.readBlob(file.blobSha);return {...file,content:bytes.toString(file.encoding==='base64'?'base64':'utf8')};
   }
-  private async loadFiles(id:string):Promise<SharedFile[]>{
+  private async loadSnapshot(id:string):Promise<SharedProjectSnapshot>{
+    const epoch=this.epoch;
     const checkout=await this.checkout(id);
-    const pendingFile=path.join(this.dataDirectory,'pending',checkout.account.id,`${id}.json`);
+    const pendingFile=path.join(await this.storageDirectory(),'pending',checkout.account.id,`${id}.json`);
     try{
       const pending=JSON.parse(await readFile(pendingFile,'utf8')) as {input:DoneInput;path:string};
       const ticket=await this.request<PublishTicket|null>(`/projects/${id}/publications/${pending.input.requestId}`);
@@ -177,24 +206,66 @@ export class CollaborationManager implements CollaborationApi {
         if(head===ticket.commitSha){await this.request(`/projects/${id}/publications/${pending.input.requestId}/confirm`,{});await unlink(pendingFile);}
       }
     }catch(e){if((e as NodeJS.ErrnoException).code!=='ENOENT')throw e;}
-    const rows=await this.request<GitFileMetadata[]>(`/projects/${id}/files`);
-    const head=await checkout.fetch();
-    if(head)await checkout.materialize(head);
+    let rows=await this.request<GitFileMetadata[]>(`/projects/${id}/files`);
+    let head=await checkout.fetch();
+    // Metadata and bytes must describe one published Git version before touching disk.
+    for(let attempt=0;!await checkout.matches(head,rows);attempt++){
+      if(attempt>=2)throw new Error('The project is being published. Retry synchronization in a moment.');
+      rows=await this.request<GitFileMetadata[]>(`/projects/${id}/files`);head=await checkout.fetch();
+    }
+    this.checkEpoch(epoch);
+    const files=await Promise.all(rows.filter(f=>!f.path.endsWith('/.gitkeep')).map(f=>this.hydrate(checkout,f)));
+    const directories=new Set<string>();
+    for(const row of rows){const parts=row.path.split('/');for(let i=1;i<parts.length;i++)directories.add(parts.slice(0,i).join('/'));}
+    const folder=await this.workingDirectory(id,checkout.account.id,epoch);
+    const protectedPaths=new Set<string>();
+    for(const [fileId,edit] of this.edits){
+      if(edit.file.projectId!==id)continue;
+      const latest=rows.find(row=>row.id===fileId);
+      if(Date.parse(edit.expiresAt)>Date.now()&&latest?.version===edit.file.version&&latest.editor?.id===checkout.account.id)protectedPaths.add(edit.file.path);
+      else this.edits.delete(fileId);
+    }
+    await folder.synchronize(files,[...directories],protectedPaths,()=>this.checkEpoch(epoch));
+    for(const [fileId,file] of this.metadata)if(file.projectId===id)this.metadata.delete(fileId);
     for(const row of rows)this.metadata.set(row.id,row);
-    return Promise.all(rows.filter(f=>!f.path.endsWith('/.gitkeep')).map(f=>this.hydrate(checkout,f)));
+    return {files,directories:[...directories].sort(),workspacePath:folder.root};
   }
-  files:CollaborationApi['files']=id=>this.serial(id,()=>this.loadFiles(id));
-  directories:CollaborationApi['directories']=async id=>{
-    const rows=await this.request<GitFileMetadata[]>(`/projects/${id}/files`);const dirs=new Set<string>();
-    for(const f of rows){const parts=f.path.split('/');for(let i=1;i<parts.length;i++)dirs.add(parts.slice(0,i).join('/'));}
-    return [...dirs].sort();
+  snapshot:CollaborationApi['snapshot']=id=>{
+    const key=`${this.epoch}:${id}`;
+    const running=this.snapshots.get(key);if(running)return running;
+    const epoch=this.epoch;
+    const work=this.serial(id,()=>{this.checkEpoch(epoch);return this.loadSnapshot(id);});
+    this.snapshots.set(key,work);
+    void work.finally(()=>{if(this.snapshots.get(key)===work)this.snapshots.delete(key);}).catch(()=>undefined);
+    return work;
   };
+  files:CollaborationApi['files']=async id=>(await this.snapshot(id)).files;
+  directories:CollaborationApi['directories']=async id=>(await this.snapshot(id)).directories;
+  private async workingDirectory(projectId:string,accountId:string,epoch:number):Promise<SharedWorkingDirectory>{
+    const backend=this.apiUrl!.replace(/\/$/,'');
+    const key=createHash('sha256').update(`${backend}\0${accountId}\0${projectId}`).digest('hex');
+    const cached=this.folders.get(key);if(cached)return cached;
+    let root=(await this.links()).find(link=>link.projectId===projectId)?.workspacePath;
+    if(!root){
+      const base=this.projectsDirectory?await this.projectsDirectory():path.join(this.dataDirectory,'projects');
+      await mkdir(base,{recursive:true});
+      this.checkEpoch(epoch);
+      root=await mkdtemp(path.join(await realpath(base),'Shared-project-'));
+      await this.projectLinks.bind(backend,root,projectId);
+    }
+    const canonical=await realpath(root);
+    this.checkEpoch(epoch);
+    const folder=new SharedWorkingDirectory(canonical,path.join(this.dataDirectory,'working-folders',key+'.json'));
+    this.folders.set(key,folder);return folder;
+  }
   private async publish(projectId:string,requestId:string,entries:ProjectFileInput[],leases:Record<string,string>):Promise<void>{
+    const epoch=this.epoch;
+    const request=<T>(route:string,body?:unknown):Promise<T>=>{this.checkEpoch(epoch);return this.request<T>(route,body);};
     this.validateEntries(entries);
     const fingerprint=createHash('sha256').update(JSON.stringify({entries,leases})).digest('hex');
     const checkout=await this.checkout(projectId,requestId);await checkout.initialize();
     const receipt=await checkout.receipt(requestId);if(receipt&&receipt.fingerprint!==fingerprint)throw new Error('Publication request ID was already used');
-    let ticket=await this.request<PublishTicket|null>(`/projects/${projectId}/publications/${requestId}`);
+    let ticket=await request<PublishTicket|null>(`/projects/${projectId}/publications/${requestId}`);
     const changes:PublishChange[]=entries.map(f=>({path:f.path,blobSha:gitBlobSha(Buffer.from(f.content,f.encoding==='base64'?'base64':'utf8')),encoding:f.encoding??'utf8'}));
     if(ticket&&JSON.stringify(ticket.changes)!==JSON.stringify(changes))throw new Error('Publication request ID was already used');
     if(ticket?.status==='confirmed')return;
@@ -202,22 +273,30 @@ export class CollaborationManager implements CollaborationApi {
     let head=await checkout.fetch();
     if(!ticket){
       await checkout.saveReceipt(requestId,{fingerprint,commitSha:null});
-      ticket=await this.request<PublishTicket>(`/projects/${projectId}/publications`,{requestId,baseSha:head,changes,leases});
+      for(let attempt=0;!ticket;attempt++){
+        try{ticket=await request<PublishTicket>(`/projects/${projectId}/publications`,{requestId,baseSha:head,changes,leases});}
+        catch(error){
+          if(attempt>=7||!(error instanceof Error)||!/^Another publication is in progress\.|^Remote has a newer version\. Synchronize and retry\.$/.test(error.message))throw error;
+          await new Promise(resolve=>setTimeout(resolve,Math.min(4000,1000*2**attempt)+Math.floor(Math.random()*250)));
+          this.checkEpoch(epoch);head=await checkout.fetch();
+        }
+      }
     }
     if(JSON.stringify(ticket.changes)!==JSON.stringify(changes))throw new Error('Publication request ID was already used');
     if(ticket.commitSha){
       // Confirmation first recovers a successful push whose HTTP response was lost.
-      try{await this.request(`/projects/${projectId}/publications/${requestId}/confirm`,{});return;}catch(e){if(head===ticket.commitSha)throw e;}
+      try{await request(`/projects/${projectId}/publications/${requestId}/confirm`,{});return;}catch(e){if(head===ticket.commitSha)throw e;}
       if(!await checkout.contains(ticket.commitSha))throw new Error('Publication commit is unavailable on this device. Recovery is required.');
     }
     if(head!==ticket.baseSha)throw new Error('Remote has a newer version. Your draft is preserved; synchronize before retrying.');
     if(Date.parse(ticket.expiresAt)<=Date.now())throw new Error('Publication turn expired. Request Edit again before publishing.');
+    this.checkEpoch(epoch);
     const sha=ticket.commitSha??await checkout.commit(ticket.baseSha,entries,requestId);
     await checkout.saveReceipt(requestId,{fingerprint,commitSha:sha});
-    await this.request(`/projects/${projectId}/publications/${requestId}/commit`,{sha});
+    await request(`/projects/${projectId}/publications/${requestId}/commit`,{sha});
     await checkout.push(sha);
-    await this.request(`/projects/${projectId}/publications/${requestId}/confirm`,{});
-    head=await checkout.fetch();if(head)await checkout.materialize(head);
+    await request(`/projects/${projectId}/publications/${requestId}/confirm`,{});
+    await checkout.fetch();
   }
   private async add(projectId:string,entries:ProjectFileInput[],directories:string[]=[]):Promise<string[]>{
     const files=this.withDirectories(entries,directories);
@@ -276,15 +355,26 @@ export class CollaborationManager implements CollaborationApi {
     return this.add(id,inputs,directories);
   };
   acquire:CollaborationApi['acquire']=async id=>{
-    const file=this.metadata.get(id);if(!file)throw new Error('Synchronize the project before requesting Edit');
-    const result=await this.request<{token:string;expiresAt:string;file:GitFileMetadata}>(`/files/${id}/edit`,{blobSha:file.blobSha,version:file.version});
-    const checkout=await this.checkout(file.projectId);await checkout.fetch();return {...result,file:await this.hydrate(checkout,result.file)};
+    const known=this.metadata.get(id);if(!known)throw new Error('Synchronize the project before requesting Edit');
+    const epoch=this.epoch;
+    return this.serial(known.projectId,async()=>{
+      this.checkEpoch(epoch);
+      if(this.edits.has(id))throw new Error('This file already has an Edit session on this device.');
+      const snapshot=await this.loadSnapshot(known.projectId);
+      const file=this.metadata.get(id);if(!file)throw new Error('This file is no longer in the project.');
+      const result=await this.request<{token:string;expiresAt:string;file:GitFileMetadata}>(`/files/${id}/edit`,{blobSha:file.blobSha,version:file.version});
+      const resultFile={...result.file,content:snapshot.files.find(row=>row.id===id)!.content};
+      const edit={...result,file:resultFile};this.edits.set(id,edit);return edit;
+    });
   };
-  renew:CollaborationApi['renew']=(id,token)=>this.request(`/files/${id}/renew`,{token});
+  renew:CollaborationApi['renew']=async(id,token)=>{
+    try{const result=await this.request<{expiresAt:string}>(`/files/${id}/renew`,{token});const edit=this.edits.get(id);if(edit?.token===token)this.edits.set(id,{...edit,expiresAt:result.expiresAt});return result;}
+    catch(error){if(this.edits.get(id)?.token===token)this.edits.delete(id);throw error;}
+  };
   done:CollaborationApi['done']=async input=>{
     const file=this.metadata.get(input.fileId);if(!file)throw new Error('Synchronize the project before publishing');
     const accountState=(await this.accounts.state()).account;
-    if(accountState){try{const prior=JSON.parse(await readFile(path.join(this.dataDirectory,'pending',accountState.id,`${file.projectId}.json`),'utf8')) as {input:DoneInput;path:string};
+    if(accountState){try{const prior=JSON.parse(await readFile(path.join(await this.storageDirectory(),'pending',accountState.id,`${file.projectId}.json`),'utf8')) as {input:DoneInput;path:string};
       if(prior.path===file.path&&prior.input.content===input.content){const state=await this.request<PublishTicket|null>(`/projects/${file.projectId}/publications/${prior.input.requestId}`);if(state&&state.status!=='aborted')input=prior.input;}
     }catch(e){if((e as NodeJS.ErrnoException).code!=='ENOENT')throw e;}}
     // A confirmed receipt may have advanced the cached version after a lost response.
@@ -295,13 +385,18 @@ export class CollaborationManager implements CollaborationApi {
     const account=(await this.accounts.state()).account;
     if(!account)throw new Error('Please sign in');
     // Save the full local intent before network operations so a restart can resume the same request.
-    const pendingFile=path.join(this.dataDirectory,'pending',account.id,`${file.projectId}.json`);
+    const pendingFile=path.join(await this.storageDirectory(),'pending',account.id,`${file.projectId}.json`);
     await this.saveJson(pendingFile,{input,path:file.path});
     await this.serial(file.projectId,()=>this.publish(file.projectId,input.requestId,entries,{[file.id]:input.token}));
+    if(this.edits.get(file.id)?.token===input.token)this.edits.delete(file.id);
     await unlink(pendingFile).catch(()=>undefined);
     return (await this.files(file.projectId)).find(f=>f.id===file.id)!;
   };
-  release:CollaborationApi['release']=async(id,token)=>{await this.request(`/files/${id}/release`,{token});};
+  release:CollaborationApi['release']=async(id,token)=>{
+    if(this.edits.get(id)?.token===token)this.edits.delete(id);
+    await this.request(`/files/${id}/release`,{token});
+    const file=this.metadata.get(id);if(file)await this.snapshot(file.projectId);
+  };
   history:CollaborationApi['history']=async id=>{const file=this.metadata.get(id);if(!file)throw new Error('Synchronize the project first');const checkout=await this.checkout(file.projectId);const history=await checkout.history(file.path);return history.map((h,i)=>({...h,version:history.length-i}));};
   invite:CollaborationApi['invite']=async(id,login,role)=>{await this.request(`/projects/${id}/invitations`,{login,role});};
   invitations:CollaborationApi['invitations']=()=>this.request('/invitations');
@@ -312,7 +407,7 @@ export class CollaborationManager implements CollaborationApi {
   migrateLegacy=async(projectId:string):Promise<{project:SharedProject;limitations:string}>=>{
     const account=(await this.accounts.state()).account;if(!account)throw new Error('Please sign in');
     const requestId=this.stableId(`migration:${account.id}:${projectId}`);
-    const filename=path.join(this.dataDirectory,'migrations',account.id,`${projectId}.json`);
+    const filename=path.join(await this.storageDirectory(),'migrations',account.id,`${projectId}.json`);
     type Export={project:SharedProject;files:ProjectFileInput[];directories:string[];limitations:string};
     let exported:Export;
     try{exported=JSON.parse(await readFile(filename,'utf8')) as Export;}catch(e){if((e as NodeJS.ErrnoException).code!=='ENOENT')throw e;exported=await this.request<Export>('/legacy/export',{projectId,requestId});await this.saveJson(filename,exported);}
@@ -324,14 +419,22 @@ export class CollaborationManager implements CollaborationApi {
     const account=(await this.accounts.state()).account;
     if(!account) throw new Error('Sign in to access your draft');
     const key=createHash('sha256').update(`${projectId}\0${filePath}`).digest('hex');
-    return path.join(this.dataDirectory,'drafts',account.id,`${key}.json`);
+    return path.join(await this.storageDirectory(),'drafts',account.id,`${key}.json`);
   }
   saveDraft:CollaborationApi['saveDraft']=async(projectId,filePath,content,baseVersion)=>{
-    const filename=await this.draftPath(projectId,filePath); await mkdir(path.dirname(filename),{recursive:true,mode:0o700});
-    // A unique temporary file keeps concurrent saves from sharing an atomic-write path.
-    const temporary=`${filename}.${randomUUID()}.tmp`;
-    await writeFile(temporary,JSON.stringify({content,baseVersion}),{mode:0o600});
-    await rename(temporary,filename);
+    validateSourcePath(filePath);
+    const epoch=this.epoch;
+    const filename=await this.draftPath(projectId,filePath);
+    await this.serial(projectId,async()=>{
+      this.checkEpoch(epoch);
+      // Recovery is durable before replacing the visible source file.
+      await this.saveJson(filename,{content,baseVersion});
+      const edit=[...this.edits.values()].find(edit=>edit.file.projectId===projectId&&edit.file.path===filePath&&edit.file.version===baseVersion&&Date.parse(edit.expiresAt)>Date.now());
+      if(!edit)return;
+      const account=(await this.accounts.state()).account;if(!account)throw new Error('Please sign in');
+      const folder=await this.workingDirectory(projectId,account.id,epoch);
+      await folder.write(filePath,Buffer.from(content),()=>this.checkEpoch(epoch));
+    });
   };
   draft:CollaborationApi['draft']=async(projectId,filePath)=>{
     try { const value:unknown=JSON.parse(await readFile(await this.draftPath(projectId,filePath),'utf8')); if(value && typeof value==='object' && 'content' in value && typeof value.content==='string' && 'baseVersion' in value && typeof value.baseVersion==='number') return {content:value.content,baseVersion:value.baseVersion}; }
