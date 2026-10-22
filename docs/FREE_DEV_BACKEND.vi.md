@@ -4,6 +4,33 @@ Backend gồm API Node.js và PostgreSQL trên Render, cùng region Singapore.
 Hai desktop dùng cùng URL HTTPS; không cần giữ máy Mac bật.
 LaTeX/Docker và Git của desktop vẫn chạy trên từng máy.
 
+## Môi trường dev hiện tại
+
+- API: `https://easy-latex-dev-api.onrender.com`.
+- Health: `https://easy-latex-dev-api.onrender.com/health`.
+- Backend chạy từ nhánh `codex/free-dev-backend` trên gói Free tại Singapore.
+- Database Free hết hạn ngày **21/11/2026**; dữ liệu test cloud tách riêng
+  database local trên Mac.
+- Ngày 22/10/2026 đã kiểm chứng HTTPS, health 200, request chưa đăng nhập 401,
+  webhook sai chữ ký 401, webhook ping đúng chữ ký 200 và khởi tạo OAuth 200.
+- GitHub App hiện có đã trỏ webhook sang `/github/webhook` trên API cloud.
+- Cần hoàn tất xác thực chủ tài khoản GitHub để lưu callback cloud, rồi kiểm
+  chứng đăng nhập và cộng tác từ hai desktop. Khởi tạo OAuth thành công chưa
+  chứng minh quá trình đăng nhập hoàn tất.
+
+Trên cả Mac và Windows, mở **Connection settings → Collaboration server**,
+đặt `https://easy-latex-dev-api.onrender.com`, chọn **Save server** và đăng nhập
+GitHub. Đăng xuất trước khi đổi server nếu đang có phiên.
+
+Để nhúng URL này làm mặc định khi build Windows bằng PowerShell:
+
+```powershell
+$env:EASY_LATEX_RELEASE_API_URL = "https://easy-latex-dev-api.onrender.com"
+npm run make
+```
+
+Ứng dụng đã cài có thể đổi URL trong Connection settings mà không build lại.
+
 ## Giới hạn miễn phí
 
 Tại ngày 22/10/2026, [Render Free](https://render.com/docs/free) hỗ trợ API và
