@@ -1,5 +1,4 @@
 import path from 'node:path';
-import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { config } from 'dotenv';
 import { createClient } from '@supabase/supabase-js';
@@ -11,11 +10,12 @@ import { GitHub } from './github';
 import { GitHubAuth } from './github-auth';
 import { GitHubStore } from './github-store';
 import { createGitHubServer } from './github-server';
+import { loadGitHubPrivateKey } from './private-key';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../../..');
 config({path:[path.join(root,'.env.local'),path.join(root,'.env')],quiet:true});
 function required(k:string):string{const v=process.env[k];if(!v)throw new Error(`Missing backend configuration ${k}. See docs/COLLABORATION.md.`);return v;}
 const pool=new Pool({connectionString:required('DATABASE_URL'),max:10});
-const github=new GitHub({clientId:required('GITHUB_CLIENT_ID'),clientSecret:required('GITHUB_CLIENT_SECRET'),appId:required('GITHUB_APP_ID'),slug:required('GITHUB_APP_SLUG'),callbackUrl:required('GITHUB_CALLBACK_URL'),privateKey:await readFile(required('GITHUB_PRIVATE_KEY_PATH'),'utf8'),encryptionKey:required('GITHUB_TOKEN_ENCRYPTION_KEY'),webhookSecret:required('GITHUB_WEBHOOK_SECRET')});
+const github=new GitHub({clientId:required('GITHUB_CLIENT_ID'),clientSecret:required('GITHUB_CLIENT_SECRET'),appId:required('GITHUB_APP_ID'),slug:required('GITHUB_APP_SLUG'),callbackUrl:required('GITHUB_CALLBACK_URL'),privateKey:await loadGitHubPrivateKey(process.env),encryptionKey:required('GITHUB_TOKEN_ENCRYPTION_KEY'),webhookSecret:required('GITHUB_WEBHOOK_SECRET')});
 const auth=new GitHubAuth(pool,github),store=new GitHubStore(auth);
 const legacy=process.env.LEGACY_SUPABASE_URL&&process.env.LEGACY_SUPABASE_ANON_KEY&&process.env.LEGACY_SUPABASE_SERVICE_KEY?new LegacyMigration(store,createClient(process.env.LEGACY_SUPABASE_URL,process.env.LEGACY_SUPABASE_ANON_KEY,{auth:{persistSession:false,autoRefreshToken:false}}),createAssetStore(process.env.LEGACY_SUPABASE_URL,process.env.LEGACY_SUPABASE_SERVICE_KEY)):undefined;
 const app=createGitHubServer(store,auth,new ProjectUpdates(pool),legacy);

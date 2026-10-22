@@ -32,8 +32,8 @@ services:
         sync: false
       - key: GITHUB_WEBHOOK_SECRET
         sync: false
-      - key: GITHUB_PRIVATE_KEY_PATH
-        value: /etc/secrets/github-app.pem
+      - key: GITHUB_PRIVATE_KEY_BASE64
+        sync: false
 
 databases:
   - name: easy-latex-dev-db

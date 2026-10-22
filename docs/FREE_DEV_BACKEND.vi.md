@@ -19,8 +19,9 @@ ping định kỳ để tránh chế độ ngủ.
    Kiểm tra cả API và database đều là **Free** trước khi tạo.
 2. Điền các biến GitHub trong Blueprint bằng cấu hình GitHub App hiện có.
    Không tạo GitHub App trùng. Giữ khóa mã hóa cũ nếu chuyển database cũ.
-3. Thêm Secret File `github-app.pem`, dùng nội dung private key của App.
-   Backend đọc file tại `/etc/secrets/github-app.pem`; không commit file này.
+3. Đặt `GITHUB_PRIVATE_KEY_BASE64` bằng base64 của PEM hiện có, lưu như secret.
+   Base64 không phải mã hóa; không commit hoặc chia sẻ giá trị này. Có thể thay
+   bằng Secret File `github-app.pem` và `GITHUB_PRIVATE_KEY_PATH=/etc/secrets/github-app.pem`.
 4. Khi biết URL dịch vụ, đặt `GITHUB_CALLBACK_URL` thành
    `https://TEN-DICH-VU.onrender.com/auth/github/callback` rồi deploy lại.
 5. Trong GitHub App, cập nhật Callback URL như trên và Webhook URL thành
@@ -29,6 +30,12 @@ ping định kỳ để tránh chế độ ngủ.
    Kết quả phải là JSON có `status: ok` và `collaboration: github`.
 7. Trên cả hai desktop, đăng xuất nếu cần, mở **Connection settings**, nhập
    URL gốc HTTPS rồi **Save server**, sau đó đăng nhập GitHub.
+
+Có thể xuất riêng các biến cần thiết từ cấu hình local bằng
+`node scripts/render-dev-config.mjs https://TEN-DICH-VU.onrender.com`.
+File `.local/cloud-dev/render.env` có quyền 0600, không chứa database URL local.
+Chỉ nhập file vào **Add from .env** trên Render khi đã đồng ý chuyển các khóa
+GitHub backend lên cloud. Chọn DATABASE_URL nội bộ của database cloud riêng.
 
 Build chỉ cài dependency API, không tải Electron hay compiler image lên cloud.
 Lệnh startup chạy migration trong transaction và có khóa để tránh hai lần
