@@ -20,3 +20,31 @@ jobs:
       - run: npm run typecheck
       - run: npm run lint
       - run: npm test
+
+  standalone-api:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: local-ci-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:local-ci-only@127.0.0.1:5432/postgres
+      GITHUB_MIGRATION_TEST_ADMIN_URL: postgresql://postgres:local-ci-only@127.0.0.1:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --include=dev --ignore-scripts --workspace @easy-latex/api --include-workspace-root=false
+      - run: npm run build --workspace @easy-latex/api
+      - run: node --test scripts/test/github-database.test.mjs
+      - run: npm run github:test -- --standalone

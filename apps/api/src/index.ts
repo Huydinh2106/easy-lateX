@@ -20,6 +20,6 @@ const auth=new GitHubAuth(pool,github),store=new GitHubStore(auth);
 const legacy=process.env.LEGACY_SUPABASE_URL&&process.env.LEGACY_SUPABASE_ANON_KEY&&process.env.LEGACY_SUPABASE_SERVICE_KEY?new LegacyMigration(store,createClient(process.env.LEGACY_SUPABASE_URL,process.env.LEGACY_SUPABASE_ANON_KEY,{auth:{persistSession:false,autoRefreshToken:false}}),createAssetStore(process.env.LEGACY_SUPABASE_URL,process.env.LEGACY_SUPABASE_SERVICE_KEY)):undefined;
 const app=createGitHubServer(store,auth,new ProjectUpdates(pool),legacy);
 app.addHook('onClose',async()=>{await pool.end();});
-await app.listen({host:process.env.API_HOST??'127.0.0.1',port:Number(process.env.API_PORT??4318)});
+await app.listen({host:process.env.API_HOST??'127.0.0.1',port:Number(process.env.API_PORT??process.env.PORT??4318)});
 console.log('Easy LaTeX GitHub collaboration API is ready.');
 for(const signal of ['SIGINT','SIGTERM'] as const)process.once(signal,()=>{void app.close().then(()=>process.exit(0));});
