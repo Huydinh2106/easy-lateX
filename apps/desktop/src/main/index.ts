@@ -1,6 +1,12 @@
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { app, BrowserWindow, Menu, net, protocol, session } from "electron";
+import { app, BrowserWindow, Menu, net, protocol, session, safeStorage, shell, dialog } from "electron";
+import { config as loadEnvironment } from "dotenv";
+import { AccountManager } from "./services/account/AccountManager";
+import { SecureSessionStorage } from "./services/account/SecureSessionStorage";
+import { normalizeApiUrl, readReleaseApiUrl } from './services/account/ApiConfiguration';
+import { CollaborationManager } from "./services/collaboration/CollaborationManager";
+import { registerAccountIpc } from "./ipc/account.ipc";
 import { channels } from "./ipc/channels";
 import { registerCompilerIpc } from "./ipc/compiler.ipc";
 import { registerFileIpc } from "./ipc/file.ipc";
@@ -26,6 +32,8 @@ app.enableSandbox();
 let mainWindow: BrowserWindow | null = null;
 let watcher: FileWatcher | null = null;
 let compiler: CompileManager | null = null;
+let shared: CollaborationManager | null = null;
+let accounts: AccountManager | null = null;
 
 function createWindow(): BrowserWindow {
   const window = new BrowserWindow({
@@ -62,6 +70,7 @@ function createWindow(): BrowserWindow {
 }
 
 async function bootstrap(): Promise<void> {
+  loadEnvironment({ path: [path.resolve(process.cwd(), ".env.local"), path.resolve(process.cwd(), "../../.env.local"), path.resolve(process.cwd(), ".env")], quiet: true });
   const files = new FileManager();
   watcher = new FileWatcher();
   const settings = new SettingsManager(
@@ -76,7 +85,30 @@ async function bootstrap(): Promise<void> {
   const synctex = new SyncTeXManager();
   const git = new GitManager(files);
   const getWindow = (): BrowserWindow | null => mainWindow;
+  const apiUrl=await settings.get('collaborationApiUrl') || process.env.EASY_LATEX_API_URL || await readReleaseApiUrl(process.resourcesPath);
 
+  accounts = new AccountManager({url:apiUrl},
+    new SecureSessionStorage(path.join(app.getPath("userData"),"account-session.json"), {
+      available: () => safeStorage.isEncryptionAvailable() && (process.platform !== "linux" || safeStorage.getSelectedStorageBackend() !== "basic_text"),
+      encrypt: value => safeStorage.encryptString(value), decrypt: value => safeStorage.decryptString(value)
+    }), async url => { await shell.openExternal(url); });
+  shared = new CollaborationManager(accounts, apiUrl, path.join(app.getPath("userData"), "collaboration"), artifacts, async () => {
+    const options = {title: "Share LaTeX project", properties: ["openDirectory"] as Array<"openDirectory">};
+    const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
+    return result.canceled ? null : result.filePaths[0] ?? null;
+  }, () => files.getWorkspaceRoot(), async kind => {
+    const options = {title: kind === 'files' ? 'Add Files to Shared Project' : 'Add Folder to Shared Project', properties: kind === 'files' ? ['openFile', 'multiSelections'] as Array<'openFile' | 'multiSelections'> : ['openDirectory'] as Array<'openDirectory'>};
+    const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
+    return result.canceled ? [] : result.filePaths;
+  }, () => settings.get('projectsDirectory'));
+  registerAccountIpc(accounts, shared, getWindow, async value=>{
+    const url=normalizeApiUrl(value);
+    if((await accounts!.state()).account)throw new Error('Sign out before changing the collaboration server');
+    await accounts!.cancel();
+    await settings.set('collaborationApiUrl',url);
+    await accounts!.configure(url);
+    shared!.configure(url);
+  });
   registerProjectIpc(workspace, getWindow);
   registerFileIpc(files, workspace, getWindow);
   registerCompilerIpc(compiler, getWindow);
@@ -109,6 +141,9 @@ void app.whenReady().then(async () => {
 app.on("before-quit", () => {
   watcher?.stop();
   void compiler?.cancel();
+  void shared?.cancel();
+  shared?.stopUpdates();
+  void accounts?.cancel();
 });
 
 app.on("window-all-closed", () => {

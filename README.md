@@ -6,8 +6,10 @@ source, PDF.js renders compile output, and the Electron main process owns all
 filesystem and process access. LaTeX compilation runs inside a locked-down
 Docker container; no TeX distribution is installed on the host.
 
-The application does not require a web server, database, or cloud account. A
-normal project folder remains the canonical source of truth.
+Local projects do not require a web server, database, or cloud account. A normal
+local folder remains their source of truth. Optional shared projects use GitHub repositories and a coordination API.
+Published source and history are read from Git on the desktop; PostgreSQL stores
+identity, membership, file metadata, leases and publication receipts.
 
 ## Requirements
 
@@ -82,6 +84,33 @@ Create a packaged desktop application with:
 npm run package
 ```
 
+## Optional collaboration and accounts
+
+Enable collaboration on any project with **Collaborate**. The project keeps one
+entry in **Projects**, including after restart or sign-out. Editing with others
+requires an account; ordinary project creation and editing do not.
+
+Sign in using **Continue with GitHub** in your system browser. Install the GitHub
+App and choose the project repositories during onboarding. The app creates a
+private repository for the project owner, manages Git credentials and commit
+identity, and keeps the application session in the OS key store.
+
+Only one person can Edit each file, while different files can be edited in
+parallel. Done saves locally, reserves a publication turn, commits and pushes to
+GitHub, then reports success only after the backend verifies the commit. SSE
+carries confirmed commit SHAs; desktops automatically update their project files.
+Shared edits save directly into the project folder. Opening a shared project
+replaces outside local edits with the published GitHub version before Edit is
+available. Easy LaTeX recovery drafts stay separate. Compilation still runs on
+the user's machine.
+
+Configure the GitHub App and additive migration using
+[the collaboration guide](docs/COLLABORATION.md) and `.env.example`. Start the API
+with `npm run api:dev` and the desktop with `npm run dev`. Run `npm run github:test`
+for disposable PostgreSQL integration tests with mocked GitHub. Automated tests
+do not create real GitHub repositories. The guide includes the two-account live
+test checklist and explicit legacy account/project migration workflow.
+
 ## Architecture
 
 ```text
@@ -98,7 +127,7 @@ Electron Main
   +-- FileManager / FileWatcher
   +-- CompileManager / DockerLatexCompiler
   +-- SyncTeXManager
-  +-- GitManager
+  +-- GitManager / GitCheckout
   +-- SettingsManager
 ```
 

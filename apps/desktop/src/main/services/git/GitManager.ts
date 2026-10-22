@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import type { GitStatus } from "@easy-latex/shared-types";
 import type { FileManager } from "../filesystem/FileManager";
+import { gitRuntime } from './GitRuntime';
 
 export class GitManager {
   constructor(private readonly files: FileManager) {}
@@ -13,7 +14,9 @@ export class GitManager {
       return { available: true, isRepository: false };
     }
     return new Promise((resolve) => {
-      const child = spawn("git", ["rev-parse", "--is-inside-work-tree"], {
+      const runtime = gitRuntime();
+      const child = spawn(runtime.executable, ["rev-parse", "--is-inside-work-tree"], {
+        env: runtime.env,
         cwd: workspacePath,
         shell: false,
         windowsHide: true,

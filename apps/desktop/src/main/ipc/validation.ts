@@ -88,7 +88,7 @@ export function parseSyncTeXInverse(value: unknown): SyncTeXInverseInput {
   return { page: Number(input.page), x: Number(input.x), y: Number(input.y) };
 }
 
-const settingKeys = new Set<AppSettingKey>(["compilerEngine", "projectsDirectory", "explorerWidth", "pdfWidth", "problemsHeight", "recentProjects"]);
+const settingKeys = new Set<AppSettingKey>(["compilerEngine", "projectsDirectory", "explorerWidth", "pdfWidth", "problemsHeight", "recentProjects", "collaborationApiUrl"]);
 const userSettingKeys = new Set<UserSettingKey>(["compilerEngine", "explorerWidth", "pdfWidth", "problemsHeight"]);
 
 export function parseSettingKey(value: unknown): AppSettingKey {

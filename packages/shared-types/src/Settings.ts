@@ -7,6 +7,7 @@ export interface AppSettings {
   pdfWidth: number;
   problemsHeight: number;
   recentProjects: string[];
+  collaborationApiUrl: string;
 }
 
 export type AppSettingKey = keyof AppSettings;

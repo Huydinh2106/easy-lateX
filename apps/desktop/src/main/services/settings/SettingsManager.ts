@@ -2,11 +2,13 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { AppSettingKey, AppSettings } from "@easy-latex/shared-types";
+import { normalizeApiUrl } from '../account/ApiConfiguration';
 
 export class SettingsManager {
   private readonly defaults: AppSettings;
   private settings: AppSettings;
   private loaded = false;
+  private pendingWrite: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly filePath: string,
@@ -18,7 +20,8 @@ export class SettingsManager {
       explorerWidth: 232,
       pdfWidth: 520,
       problemsHeight: 220,
-      recentProjects: []
+      recentProjects: [],
+      collaborationApiUrl: ''
     };
     this.settings = structuredClone(this.defaults);
   }
@@ -72,6 +75,7 @@ export class SettingsManager {
     const compilerEngine = ["pdflatex", "xelatex", "lualatex"].includes(input.compilerEngine) ? input.compilerEngine : "pdflatex";
     return {
       compilerEngine,
+      collaborationApiUrl: this.apiUrl(input.collaborationApiUrl),
       projectsDirectory: typeof input.projectsDirectory === "string" && path.isAbsolute(input.projectsDirectory)
         ? path.resolve(input.projectsDirectory)
         : this.defaults.projectsDirectory,
@@ -84,14 +88,25 @@ export class SettingsManager {
     };
   }
 
+  private apiUrl(value: unknown): string {
+    try { return typeof value === 'string' ? normalizeApiUrl(value) : ''; } catch { return ''; }
+  }
+
   private boundedNumber(value: number, minimum: number, maximum: number, fallback: number): number {
     return Number.isFinite(value) ? Math.min(maximum, Math.max(minimum, Math.round(value))) : fallback;
   }
 
-  private async persist(): Promise<void> {
-    await mkdir(path.dirname(this.filePath), { recursive: true });
-    const temporary = `${this.filePath}.tmp`;
-    await writeFile(temporary, `${JSON.stringify(this.settings, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
-    await rename(temporary, this.filePath);
+  private persist(): Promise<void> {
+    const content = `${JSON.stringify(this.settings, null, 2)}\n`;
+    // Rapid keyboard resizing can issue several settings writes before the
+    // previous rename finishes. Serialize the shared atomic-write destination.
+    const write = this.pendingWrite.catch(() => undefined).then(async () => {
+      await mkdir(path.dirname(this.filePath), { recursive: true });
+      const temporary = `${this.filePath}.tmp`;
+      await writeFile(temporary, content, { encoding: "utf8", mode: 0o600 });
+      await rename(temporary, this.filePath);
+    });
+    this.pendingWrite = write;
+    return write;
   }
 }

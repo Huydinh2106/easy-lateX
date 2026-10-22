@@ -10,7 +10,7 @@ const MAX_IMPORT_FILE_BYTES = 250 * 1024 * 1024;
 const MAX_IMPORT_TOTAL_BYTES = 1024 * 1024 * 1024;
 const IGNORED_DIRECTORIES = new Set([".git", "node_modules"]);
 const PROTECTED_DIRECTORIES = new Set([".easy-latex", ".git", "node_modules"]);
-const IGNORED_BUILD_EXTENSIONS = new Set([".aux", ".bbl", ".bcf", ".blg", ".fdb_latexmk", ".fls", ".log", ".out", ".run.xml", ".synctex.gz"]);
+const IGNORED_BUILD_EXTENSIONS = new Set([".aux", ".bbl", ".bcf", ".blg", ".fdb_latexmk", ".fls", ".lof", ".log", ".lot", ".out", ".run.xml", ".synctex.gz", ".toc"]);
 const EDITABLE_EXTENSIONS = new Set([".tex", ".bib", ".sty", ".cls", ".bst", ".ltx", ".md", ".txt"]);
 const WINDOWS_RESERVED_NAMES = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i;
 

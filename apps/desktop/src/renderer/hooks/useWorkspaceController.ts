@@ -21,7 +21,8 @@ const defaultSettings: AppSettings = {
   explorerWidth: 232,
   pdfWidth: 520,
   problemsHeight: 220,
-  recentProjects: []
+  recentProjects: [],
+  collaborationApiUrl: ''
 };
 
 const EDITABLE_FILE_PATTERN = /\.(?:tex|bib|sty|cls|bst|ltx|md|txt)$/i;
@@ -420,8 +421,21 @@ export function useWorkspaceController() {
   }, [refreshFiles]);
 
   const setEngine = useCallback(async (engine: LatexEngine): Promise<void> => {
-    try { setSettings(await window.desktop.settings.set("compilerEngine", engine)); }
+    try {
+      const saved = await window.desktop.settings.set("compilerEngine", engine);
+      setSettings((previous) => ({ ...previous, compilerEngine: saved.compilerEngine }));
+    }
     catch (caught) { setError(readableError(caught, "Could not save compiler settings")); }
+  }, []);
+
+  const resizePanel = useCallback((key: "explorerWidth" | "pdfWidth" | "problemsHeight", value: number, persist: boolean): void => {
+    setSettings((previous) => ({ ...previous, [key]: value }));
+    if (persist) {
+      // Persist only at the end of a gesture; late replies must not undo a newer drag.
+      void window.desktop.settings.set(key, value).catch((caught: unknown) => {
+        setError(readableError(caught, "Could not save panel sizes"));
+      });
+    }
   }, []);
 
   const selectDiagnostic = useCallback(async (diagnostic: Diagnostic): Promise<void> => {
@@ -472,6 +486,7 @@ export function useWorkspaceController() {
     cancelCompile,
     setRoot,
     setEngine,
+    resizePanel,
     selectDiagnostic,
     setPdfOpen,
     setProblemsOpen,

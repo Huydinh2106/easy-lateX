@@ -28,19 +28,57 @@ The MVP hierarchy is:
 3. project files and document structure;
 4. advanced history and synchronization infrastructure.
 
-Authentication, cloud sync, collaboration, AI writing, terminal access, and a
-visual/WYSIWYG document editor are outside this release.
+Optional authentication and shared projects extend this release through the
+View/Edit/Done contract in `docs/COLLABORATION.md`. Local projects remain available
+without an account. AI writing, terminal access, realtime coediting, and a
+visual/WYSIWYG editor remain outside this release.
 
 ## 2. Project dashboard and canonical workspace
 
-The dashboard is the application entry point. It uses a fixed local-workspace
-sidebar, a compact breadcrumb top bar, and a spacious recent-project surface.
-It retains the recognizable visual language of the earlier interface without
-restoring accounts, shared ownership, network loading, or database-backed cards.
+The dashboard is the application entry point. It uses one workspace sidebar,
+a compact breadcrumb top bar, and one project list for both local folders and
+collaborative projects. Local work is available without an account. Authentication
+opens in a dialog when the user requests collaboration; it does not replace the
+project dashboard with a separate shared-project hub.
 
-- `Projects` represents folders the user previously selected on this computer.
-- `New project` asks for a project name, shows the configured default projects
-  folder, and creates a starter `main.tex` plus `.gitignore` in a new subfolder.
+- Sign-in uses one full-width GitHub action, explicit browser handoff progress,
+  cancel/retry feedback and a truthful session-retention notice. Server settings
+  stay in a secondary disclosure. Collapsed settings are excluded from the
+  dialog's keyboard focus cycle.
+- Collaboration dialogs use the same spacing, neutral surfaces and green accent.
+  Invitations explain repository write access, show errors within the dialog and
+  prevent duplicate submission. Legacy migration verifies ownership, then lets
+  the user review a named project before creating its private repository.
+- Dialogs restore focus when closed, contain Tab navigation and support Escape
+  when no request is in flight. Long names and messages wrap within the dialog.
+
+- `Projects` contains recent folders and the signed-in account's projects in one
+  list. A folder bound to a server project appears only once. Cards show whether
+  collaboration is enabled rather than separate Local and Shared project types.
+- `New project` asks for a name and creates a starter `main.tex` plus `.gitignore`
+  in the configured projects folder. No account or separate creation mode is needed.
+- **Collaborate** on a card or in the editor saves pending changes, requests
+  sign-in when needed and activates collaboration on that project. A persisted
+  backend-scoped folder binding keeps its identity across restart and sign-out;
+  bound folders always open through collaboration. A stable, owner-scoped
+  creation request ID makes retries and concurrent activation reuse one project.
+- Shared source files are edited directly in the bound project folder. Every
+  open refreshes published files from GitHub, overwriting edits made outside
+  Easy LaTeX. Received publications update local files automatically while
+  preserving a different file with an active local Edit lease. The real folder
+  path is visible. PostgreSQL holds coordination metadata; Git transport and
+  Easy LaTeX recovery drafts remain separate. Edit stays unavailable until
+  synchronization succeeds. Saves show actual completion or failure.
+- Invitations appear on the same Projects dashboard. Both project types use the
+  same editor frame, toolbar, file explorer, outline, resizers, Problems and PDF.
+  Shared files add View/Edit/Done and server-enforced exclusive editing. Shared
+  rename, deletion and attachment replacement remain outside this version.
+- Shared file access uses one pill switch labelled `View` and `Edit`, with a
+  sliding selected segment. It changes mode only after access is granted or
+  released; unavailable edit access disables the switch. `Done` remains the
+  separate action that commits and pushes to GitHub, waits for backend
+  verification, then returns to View. Saved local, publishing, confirmed and
+  retry-needed states are distinct.
 - The default projects folder starts at `Documents/Easy LaTeX`; `Change…` uses
   the native folder picker and persists the selection for later projects.
 - `Open project` uses the native folder picker for an existing local folder.
@@ -170,11 +208,18 @@ Functional controls use 4–16px most often. Avoid nested card layouts.
 Sidebars and ordinary panels have no shadows. Shadows indicate actual overlap.
 Borders are 1px. Focus rings are 2px.
 
+Rounded shapes follow one shared scale: buttons, single-line fields, selects,
+and segmented controls use pill corners like the View/Edit switch; compact rows
+use 10px corners, cards and floating panels use 20px, and dialogs use 24px.
+The Root and Engine toolbar selectors retain their original 6px corners.
+Project tree rows retain square corners and fill the explorer width, with the
+selected row's straight accent marker along the left edge.
+
 ## 6. Controls
 
 - Primary button: one principal action per region, 32px high.
 - Secondary button: neutral surface and default border.
-- Icon button: square, named with `aria-label`, tooltip when meaning is unclear.
+- Icon button: circular within a square hit area, named with `aria-label`, tooltip when meaning is unclear.
 - Select: visible label, 28–32px high, native keyboard behavior.
 - Destructive actions: explicit label and confirmation naming the affected object.
 - Disabled controls remain readable and explain their state when necessary.
@@ -291,10 +336,20 @@ external viewers are not the embedded preview.
 Header controls:
 
 - current page and total pages;
-- previous/next;
-- zoom out/in and reset;
+- editable current-page field for an optional direct jump;
+- zoom out/in and fit to width (the default, follows panel resizing);
 - stale indicator;
 - close.
+
+All pages are stacked in a continuous vertical scroll area. Track the current
+page while scrolling; render only nearby canvases to keep long documents light.
+Page buttons must not be required to read the next page.
+
+Explorer/editor, editor/PDF, and editor/Problems dividers support pointer dragging,
+arrow keys (Shift for larger steps), and double-click or Enter to reset. Save panel
+dimensions at the end of a gesture. Keep at least 420px for the editor or overlay
+PDF when the window cannot accommodate all panels; cap Problems to leave source
+visible. The File outline retains its existing horizontal resize handle.
 
 Keep the last successful PDF visible while a new compile runs, fails, or is
 cancelled. Mark it `Out of date` after source changes. A successful compile
@@ -330,8 +385,9 @@ The status bar is informational, not a second toolbar. It may show:
 - internal history availability;
 - selected engine.
 
-Do not show branch names, commit hashes, remote status, container status, server
-ports, authentication, or cloud controls in the MVP.
+Do not show branch names, commit hashes, remote status, container status, or server
+ports in the workspace. Shared projects expose account and collaboration actions
+through product labels; technical Git operations remain hidden.
 
 ## 16. Responsive desktop behavior
 
@@ -364,7 +420,10 @@ Target WCAG 2.2 AA.
 - Only a user-selected project folder can become the active workspace.
 - File paths displayed in UI are project-relative.
 - No arbitrary shell command or terminal is exposed.
-- External links and new windows are blocked by default.
+- External links and new windows are blocked by default. GitHub authentication
+  opens a validated GitHub App authorization URL in the system browser. Backend
+  state/S256 PKCE and a separate desktop proof protect the isolated loopback
+  handoff. Tokens stay in main and secrets stay on the backend.
 - PDF artifacts are accessed through an opaque application URL.
 - A rejected path operation produces a normal recoverable error, never fallback
   access outside the workspace.
@@ -372,7 +431,7 @@ Target WCAG 2.2 AA.
 ## 19. Future capabilities
 
 SyncTeX may add forward and inverse navigation to the existing editor and PDF
-components. Git may power `History` and `Restore version`. Cloud synchronization
+components. Shared project History reads Git on the desktop. Restore version remains future work. Cloud synchronization
 may be added through a `SyncManager` that observes the same filesystem events.
 
 These capabilities must not replace the filesystem as local source of truth or
