@@ -28,7 +28,9 @@
     "github:setup": "node scripts/github-setup.mjs",
     "github:smoke": "npm run smoke --workspace @easy-latex/api --",
     "github:smoke:webhook": "npm run smoke:webhook --workspace @easy-latex/api --",
-    "github:test": "node scripts/github-test.mjs"
+    "github:test": "node scripts/github-test.mjs",
+    "supabase:build": "node scripts/supabase-build.mjs",
+    "supabase:deploy": "node scripts/supabase-deploy.mjs"
   },
   "engines": {
     "node": ">=22",

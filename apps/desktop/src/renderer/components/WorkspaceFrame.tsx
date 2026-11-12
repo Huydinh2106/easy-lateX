@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 
 import type { AppSettings, Diagnostic } from "@easy-latex/shared-types";
 import { PanelResizer } from "./PanelResizer";
 import { getPanelLayout } from "./panelLayout";
-import { PdfViewer } from "../features/pdf/PdfViewer";
+import { PdfViewer, type PdfViewerJumpTarget } from "../features/pdf/PdfViewer";
 import { ProblemsPanel } from "../features/problems/ProblemsPanel";
 
 export type PanelSettings = Pick<AppSettings, "explorerWidth" | "pdfWidth" | "problemsHeight">;
@@ -18,6 +18,8 @@ interface Props {
   pdfUrl?: string | undefined;
   pdfStale: boolean;
   onClosePdf(): void;
+  onInverseSync?(input: { page: number; x: number; y: number }): void;
+  pdfJumpTarget?: PdfViewerJumpTarget | null;
   problemsOpen: boolean;
   diagnostics: Diagnostic[];
   log: string;
@@ -45,7 +47,7 @@ export function WorkspaceFrame(props: Props) {
       <PanelResizer label="Resize project explorer" orientation="vertical" value={panels.explorerWidth} minimum={180} maximum={panels.explorerMaximum} defaultValue={232}
         onChange={(value, persist) => props.onResize("explorerWidth", value, persist)} />
       <main className="editor-workspace">
-        <section className="editor-panel" aria-label="LaTeX source editor">{props.children}</section>
+        <section className="editor-panel" aria-label="Document editor">{props.children}</section>
         {props.problemsOpen ? <PanelResizer label="Resize Problems panel" orientation="horizontal" direction={-1} value={panels.problemsHeight} minimum={120} maximum={panels.problemsMaximum} defaultValue={220}
           onChange={(value, persist) => props.onResize("problemsHeight", value, persist)} /> : null}
         <ProblemsPanel diagnostics={props.diagnostics} log={props.log} open={props.problemsOpen} onToggle={props.onToggleProblems} onSelect={props.onSelectDiagnostic}/>
@@ -53,7 +55,13 @@ export function WorkspaceFrame(props: Props) {
       {props.pdfOpen ? <>
         <PanelResizer label="Resize PDF preview" className="pdf-resizer" orientation="vertical" direction={-1} value={panels.pdfWidth} minimum={360} maximum={panels.pdfMaximum} defaultValue={520}
           onChange={(value, persist) => props.onResize("pdfWidth", value, persist)} />
-        <PdfViewer url={props.pdfUrl} stale={props.pdfStale} onClose={props.onClosePdf}/>
+        <PdfViewer
+          url={props.pdfUrl}
+          stale={props.pdfStale}
+          onClose={props.onClosePdf}
+          onInverseSync={props.onInverseSync}
+          jumpTarget={props.pdfJumpTarget}
+        />
       </> : null}
     </div>
     {props.status}

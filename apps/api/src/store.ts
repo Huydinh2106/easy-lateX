@@ -37,7 +37,7 @@ const FILE_SELECT = `select f.encoding, f.id, f.project_id as "projectId", f.pat
   left join collaboration.profiles p on p.id=l.user_id`;
 
 export class CollaborationStore {
-  constructor(public readonly pool: Pool, private readonly leaseSeconds = 90, private readonly assets?: AssetStore, private readonly historyQueue = "default") {}
+  constructor(public readonly pool: Pool, private readonly leaseSeconds = 90, private readonly assets?: AssetStore, private readonly historyQueue = "default", private readonly options: { enqueueHistory?: boolean } = {}) {}
   private async materialize(file:SharedFile):Promise<SharedFile> {
     if(file.encoding!=="base64")return file;
     if(!this.assets)throw new ApiError(503,"Attachment storage is unavailable");
@@ -53,8 +53,12 @@ export class CollaborationStore {
     await db.query("select pg_notify('easy_latex_project_changed',$1)", [projectId]);
   }
   async profile(account: Account): Promise<void> {
-    await this.pool.query(`insert into collaboration.profiles(id,email,display_name) values($1,$2,$3)
-      on conflict(id) do update set email=excluded.email,display_name=excluded.display_name`, [account.id, account.email.toLowerCase(), account.displayName]);
+    const result = await this.pool.query(`insert into collaboration.profiles(id,email,display_name) values($1,$2,$3)
+      on conflict(id) do update set email=excluded.email,display_name=excluded.display_name
+      where to_jsonb(profiles)->>'github_id' is null returning id`, [account.id, account.email.toLowerCase(), account.displayName]);
+    // Supabase Auth proves this UUID, but never silently takes over a separate
+    // GitHub identity. An operator must explicitly migrate that identity first.
+    if (!result.rowCount) throw new ApiError(409, 'This account needs an explicit identity migration before email sign-in can access it');
   }
   async member(db: Pool | PoolClient, projectId: string, userId: string, edit = false, owner = false): Promise<SharedProject['role']> {
     const row = (await db.query<{ role: SharedProject['role'] }>('select role from collaboration.members where project_id=$1 and user_id=$2', [projectId, userId])).rows[0];
@@ -73,6 +77,7 @@ export class CollaborationStore {
       join collaboration.members m on m.project_id=p.id where m.user_id=$1 order by p.created_at desc`, [userId])).rows;
   }
   private async enqueue(db: PoolClient, projectId: string, author: Account): Promise<void> {
+    if (this.options.enqueueHistory === false) return;
     await db.query(`insert into collaboration.git_jobs(project_id,snapshot,author_name,author_email,queue)
       select $1,coalesce(jsonb_agg(jsonb_build_object('path',path,'content',content,'encoding',encoding) order by path),'[]'::jsonb),$2,$3,$4
       from collaboration.files where project_id=$1`, [projectId, author.displayName, author.email, this.historyQueue]);

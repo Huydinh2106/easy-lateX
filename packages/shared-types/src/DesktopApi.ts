@@ -4,12 +4,14 @@ import type { OpenProjectResult, Project, RecentProject } from "./Project";
 import type { AppSettingKey, AppSettings, UserSettingKey } from "./Settings";
 
 export interface SyncTeXForwardInput {
+  pdfUrl?: string;
   file: string;
   line: number;
   column?: number;
 }
 
 export interface SyncTeXInverseInput {
+  pdfUrl?: string;
   page: number;
   x: number;
   y: number;
@@ -20,6 +22,7 @@ export interface SyncTeXResult {
   reason?: string;
   file?: string;
   line?: number;
+  column?: number;
   page?: number;
   x?: number;
   y?: number;
@@ -34,7 +37,10 @@ export interface DesktopApi {
   auth: {
     state(): Promise<import("./Collaboration").AccountState>;
     configure(url: string): Promise<import("./Collaboration").AccountState>;
-    github(): Promise<import("./Collaboration").AccountState>;
+    signIn(input: import("./Collaboration").Credentials): Promise<import("./Collaboration").AccountState>;
+    signUp(input: import("./Collaboration").Credentials & { displayName: string }): Promise<import("./Collaboration").AccountState>;
+    resetPassword(email: string): Promise<import("./Collaboration").AccountState>;
+    updatePassword(password: string): Promise<import("./Collaboration").AccountState>;
     cancel(): Promise<void>;
     signOut(): Promise<void>;
   };

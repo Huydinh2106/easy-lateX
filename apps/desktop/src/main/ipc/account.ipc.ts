@@ -13,7 +13,10 @@ export function registerAccountIpc(accounts:AccountManager,shared:CollaborationM
     switch(action) {
       case 'state': return accounts.state();
       case 'configure': {if(!configure)throw new Error('Server configuration unavailable');await configure(z.string().max(2048).parse(value));return accounts.state();}
-      case 'github': return accounts.github();
+      case 'signIn': return accounts.signIn(z.object({email:z.email().max(254),password:z.string().min(1).max(1024)}).parse(value));
+      case 'signUp': return accounts.signUp(z.object({email:z.email().max(254),password:z.string().min(8).max(1024),displayName:z.string().trim().min(1).max(80)}).parse(value));
+      case 'resetPassword': return accounts.resetPassword(z.email().max(254).parse(value));
+      case 'updatePassword': return accounts.updatePassword(z.string().min(8).max(1024).parse(value));
       case 'cancel': return accounts.cancel();
       case 'signOut': shared.stopUpdates();for(const stop of subscriptions.values())stop();subscriptions.clear();return accounts.signOut();
       default: throw new Error('Unknown account operation');
@@ -53,12 +56,13 @@ export function registerAccountIpc(accounts:AccountManager,shared:CollaborationM
       case 'renew': case 'release': {const v=z.object({fileId:uuid,token:uuid}).parse(value);return action==='renew'?shared.renew(v.fileId,v.token):shared.release(v.fileId,v.token);}
       case 'done': return shared.done(z.object({fileId:uuid,token:uuid,baseVersion:z.number().int().positive(),content,requestId:uuid}).parse(value));
       case 'history': return shared.history(uuid.parse(value));
-      case 'invite': {const v=z.object({projectId:uuid,email:z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9-]{0,38}$/),role:z.enum(['editor','viewer'])}).parse(value);return shared.invite(v.projectId,v.email,v.role);}
+      case 'invite': {const v=z.object({projectId:uuid,email:z.string().trim().pipe(z.email().max(254)),role:z.enum(['editor','viewer'])}).parse(value);return shared.invite(v.projectId,v.email,v.role);}
       case 'invitations': return shared.invitations();
       case 'accept': return shared.accept(uuid.parse(value));
       case 'saveDraft': {const v=z.object({projectId:uuid,path:z.string().max(512),content,baseVersion:z.number().int().positive()}).parse(value);return shared.saveDraft(v.projectId,v.path,v.content,v.baseVersion);}
       case 'draft': case 'clearDraft': {const v=z.object({projectId:uuid,path:z.string().max(512)}).parse(value);return action==='draft'?shared.draft(v.projectId,v.path):shared.clearDraft(v.projectId,v.path);}
       case 'cancelCompile': return shared.cancelCompile();
+      case 'forwardSync': {const v=z.object({projectId:uuid,pdfUrl:z.string().regex(/^easy-latex:\/\/pdf\/[0-9a-f-]{36}$/i),input:z.object({file:z.string().min(1).max(512),line:z.number().int().positive(),column:z.number().int().positive().optional()})}).parse(value);return shared.forwardSync(v.projectId,v.pdfUrl,v.input);}
       case 'compile': {const v=z.object({projectId:uuid,files:z.array(z.object({path:z.string().max(512),content:z.string().max(14*1024*1024),encoding:z.enum(['utf8','base64']).optional()})).max(1000),rootDocument:z.string().max(512),engine:z.enum(['pdflatex','xelatex','lualatex'])}).parse(value);return shared.compile(v.projectId,v.files,v.rootDocument,v.engine);}
       default: throw new Error('Unknown collaboration operation');
     }

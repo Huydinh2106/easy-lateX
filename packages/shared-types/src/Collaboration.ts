@@ -12,6 +12,9 @@ export interface AccountState {
   googleEnabled: boolean;
   account: Account | null;
   recovery: boolean;
+  confirmationRequired?: boolean;
+  recoveryPending?: boolean;
+  message?: string;
 }
 export interface Credentials { email: string; password: string; }
 export interface SharedProject {
@@ -70,6 +73,7 @@ export interface CollaborationApi {
   draft(projectId: string, path: string): Promise<{ content: string; baseVersion: number } | null>;
   clearDraft(projectId: string, path: string): Promise<void>;
   cancelCompile(): Promise<boolean>;
+  forwardSync(projectId: string, pdfUrl: string, input: { file: string; line: number; column?: number | undefined }): Promise<import("./DesktopApi").SyncTeXResult>;
   compile(projectId: string, files: ProjectFileInput[], rootDocument: string, engine: import("./Project").LatexEngine): Promise<import("./CompileResult").CompileResult>;
 }
 

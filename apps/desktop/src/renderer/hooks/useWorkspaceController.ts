@@ -9,10 +9,12 @@ import type {
   GitStatus,
   LatexEngine,
   OpenProjectResult,
-  RecentProject
+  RecentProject,
+  SyncTeXInverseInput
 } from "@easy-latex/shared-types";
 import type { SaveState } from "../features/compile/CompileToolbar";
 import { preserveLastSuccessfulPdf } from "../features/compile/preserveCompileResult";
+import type { PdfViewerJumpTarget } from "../features/pdf/PdfViewer";
 
 const idleCompileEvent: CompileEvent = { phase: "idle", message: "Ready to compile" };
 const defaultSettings: AppSettings = {
@@ -64,17 +66,34 @@ export function useWorkspaceController() {
   const [problemsOpen, setProblemsOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [jumpTarget, setJumpTarget] = useState<JumpTarget | null>(null);
+  const [pdfJumpTarget, setPdfJumpTarget] = useState<PdfViewerJumpTarget | null>(null);
 
   const activeFileRef = useRef<FileContent | null>(null);
   const contentRef = useRef("");
   const dirtyRef = useRef(false);
   const loadingSequence = useRef(0);
+  const projectGeneration = useRef(0);
+  const buildSequence = useRef(0);
+  const previewGeneration = useRef(0);
+  const navigationSequence = useRef(0);
+  const compileResultRef = useRef<CompileResult | null>(null);
+  const activeCompilation = useRef<{ project: number; build: number } | null>(null);
   activeFileRef.current = activeFile;
   contentRef.current = content;
 
+  const resetPreview = useCallback(() => {
+    compileResultRef.current = null;
+    previewGeneration.current++;
+    navigationSequence.current++;
+    setCompileResult(null);
+    setPdfJumpTarget(null);
+    setPdfStale(false);
+  }, []);
+
   const refreshFiles = useCallback(async (): Promise<FileEntry[]> => {
+    const generation = projectGeneration.current;
     const next = await window.desktop.file.list();
-    setFiles(next);
+    if (generation === projectGeneration.current) setFiles(next);
     return next;
   }, []);
 
@@ -132,8 +151,14 @@ export function useWorkspaceController() {
   }, [loadFile, save]);
 
   const hydrateProject = useCallback(async (result: OpenProjectResult): Promise<void> => {
+    const generation = ++projectGeneration.current;
+    buildSequence.current++;
+    activeCompilation.current = null;
+    loadingSequence.current++;
+    resetPreview();
     setProjectResult(result);
     const tree = await refreshFiles();
+    if (generation !== projectGeneration.current) return;
     const first = tree.find((entry) => entry.kind === "file" && entry.path === result.project.rootDocument)
       ?? tree.find((entry) => entry.kind === "file" && entry.path.toLowerCase().endsWith(".tex"))
       ?? tree.find((entry) => entry.kind === "file");
@@ -142,18 +167,18 @@ export function useWorkspaceController() {
       setActiveFile(null);
       setContent("");
     }
-    setCompileResult(null);
+    if (generation !== projectGeneration.current) return;
     setCompileEvent(idleCompileEvent);
-    setPdfStale(false);
     setError(null);
     const [gitStatus, loadedSettings] = await Promise.all([
       window.desktop.git.status(),
       window.desktop.settings.all(),
       refreshRecentProjects()
     ]);
+    if (generation !== projectGeneration.current) return;
     setGit(gitStatus);
     setSettings(loadedSettings);
-  }, [loadFile, refreshFiles, refreshRecentProjects]);
+  }, [loadFile, refreshFiles, refreshRecentProjects, resetPreview]);
 
   const openProject = useCallback(async (): Promise<void> => {
     if (dirtyRef.current && !await save()) return;
@@ -205,9 +230,16 @@ export function useWorkspaceController() {
   }, [hydrateProject, refreshRecentProjects, save]);
 
   const showProjects = useCallback(async (): Promise<void> => {
+    const previousGeneration = projectGeneration.current;
     if (dirtyRef.current && !await save()) return;
+    if (previousGeneration !== projectGeneration.current) return;
+    const generation = ++projectGeneration.current;
+    buildSequence.current++;
+    activeCompilation.current = null;
+    resetPreview();
     const compiling = ["starting", "running", "cancelling"].includes(compileEvent.phase);
     if (compiling) await window.desktop.compiler.cancel().catch(() => false);
+    if (generation !== projectGeneration.current) return;
     loadingSequence.current += 1;
     activeFileRef.current = null;
     contentRef.current = "";
@@ -216,14 +248,12 @@ export function useWorkspaceController() {
     setFiles([]);
     setActiveFile(null);
     setContent("");
-    setCompileResult(null);
     setCompileEvent(idleCompileEvent);
     setPdfOpen(false);
-    setPdfStale(false);
     setProblemsOpen(false);
     setError(null);
     await refreshRecentProjects().catch((caught: unknown) => setError(readableError(caught, "Could not refresh recent projects")));
-  }, [compileEvent.phase, refreshRecentProjects, save]);
+  }, [compileEvent.phase, refreshRecentProjects, save, resetPreview]);
 
   const forgetRecentProject = useCallback(async (workspacePath: string): Promise<void> => {
     try {
@@ -235,14 +265,19 @@ export function useWorkspaceController() {
   }, []);
 
   useEffect(() => {
+    const generation = projectGeneration.current;
     void Promise.all([window.desktop.settings.all(), window.desktop.project.current(), window.desktop.project.recent()]).then(async ([loadedSettings, current, recent]) => {
+      if (generation !== projectGeneration.current) return;
       setSettings(loadedSettings);
       setRecentProjects(recent);
       if (current) await hydrateProject(current);
     }).catch((caught: unknown) => setError(readableError(caught, "Application startup failed")));
   }, [hydrateProject]);
 
-  useEffect(() => window.desktop.compiler.onEvent(setCompileEvent), []);
+  useEffect(() => window.desktop.compiler.onEvent(event => {
+    const active = activeCompilation.current;
+    if (active?.project === projectGeneration.current && active.build === buildSequence.current) setCompileEvent(event);
+  }), []);
 
   useEffect(() => window.desktop.file.onChanged((event) => {
     if (!projectResult) return;
@@ -271,7 +306,11 @@ export function useWorkspaceController() {
       setError("Choose a root .tex document before compiling");
       return;
     }
-    if (!await save()) return;
+    const generation = projectGeneration.current;
+    const build = ++buildSequence.current;
+    if (!await save() || generation !== projectGeneration.current || build !== buildSequence.current) return;
+    const compilation = { project: generation, build };
+    activeCompilation.current = compilation;
     setPdfOpen(true);
     setError(null);
     try {
@@ -279,14 +318,23 @@ export function useWorkspaceController() {
         engine: settings.compilerEngine,
         rootDocument: projectResult.project.rootDocument
       });
-      setCompileResult((previous) => preserveLastSuccessfulPdf(previous, result));
+      if (generation !== projectGeneration.current || build !== buildSequence.current) return;
+      const next = preserveLastSuccessfulPdf(compileResultRef.current, result);
+      if (next.pdfUrl !== compileResultRef.current?.pdfUrl) {
+        previewGeneration.current++;
+        navigationSequence.current++;
+        setPdfJumpTarget(null);
+      }
+      compileResultRef.current = next;
+      setCompileResult(next);
       setPdfStale(!result.success);
       setProblemsOpen(result.errors.length > 0 || result.warnings.length > 0);
     } catch (caught) {
+      if (generation !== projectGeneration.current || build !== buildSequence.current) return;
       const message = readableError(caught, "Compilation could not start");
       setError(message);
       setCompileEvent({ phase: "failed", message });
-    }
+    } finally { if (activeCompilation.current === compilation) activeCompilation.current = null; }
   }, [projectResult, save, settings.compilerEngine]);
 
   const cancelCompile = useCallback(async (): Promise<void> => {
@@ -440,9 +488,80 @@ export function useWorkspaceController() {
 
   const selectDiagnostic = useCallback(async (diagnostic: Diagnostic): Promise<void> => {
     if (!diagnostic.file || !diagnostic.line) return;
-    const match = files.find((entry) => entry.kind === "file" && (entry.path === diagnostic.file || diagnostic.file?.endsWith(`/${entry.path}`)));
+    const match = files.find((entry) => entry.kind === "file" && entry.path === diagnostic.file)
+      ?? files.find((entry) => entry.kind === "file" && (diagnostic.file?.endsWith(`/${entry.path}`) || entry.path.endsWith(`/${diagnostic.file}`)))
+      ?? files.find((entry) => entry.kind === "file" && entry.path.split("/").pop() === diagnostic.file?.split("/").pop());
     if (!match || !await openFile(match.path)) return;
     setJumpTarget({ path: match.path, line: diagnostic.line, ...(diagnostic.column ? { column: diagnostic.column } : {}), nonce: Date.now() });
+  }, [files, openFile]);
+
+  const syncToPdf = useCallback(async (line?: number, column?: number): Promise<void> => {
+    const file = activeFileRef.current;
+    if (!file) {
+      setError("Open a LaTeX source file to jump to PDF");
+      return;
+    }
+    const pdfUrl = compileResultRef.current?.pdfUrl;
+    if (!pdfUrl) { setError("Compile the document before jumping to PDF"); return; }
+    const generation = projectGeneration.current, preview = previewGeneration.current;
+    const navigation = ++navigationSequence.current;
+    const targetLine = line ?? 1;
+    try {
+      const result = await window.desktop.synctex.forward({
+        pdfUrl,
+        file: file.path,
+        line: targetLine,
+        ...(column !== undefined ? { column } : {})
+      });
+      if (generation !== projectGeneration.current || preview !== previewGeneration.current || navigation !== navigationSequence.current || pdfUrl !== compileResultRef.current?.pdfUrl || file.path !== activeFileRef.current?.path) return;
+      if (result.available && result.page && result.x !== undefined && result.y !== undefined) {
+        setPdfOpen(true);
+        setPdfJumpTarget({
+          page: result.page,
+          x: result.x,
+          y: result.y,
+          nonce: Date.now()
+        });
+      } else if (result.reason) {
+        setError(result.reason);
+      }
+    } catch (caught) {
+      if (generation !== projectGeneration.current || preview !== previewGeneration.current || navigation !== navigationSequence.current) return;
+      setError(readableError(caught, "Could not jump to PDF"));
+    }
+  }, []);
+
+  const syncFromPdf = useCallback(async (input: SyncTeXInverseInput): Promise<void> => {
+    const pdfUrl = compileResultRef.current?.pdfUrl;
+    if (!pdfUrl) { setError("Compile the document before jumping to source"); return; }
+    const generation = projectGeneration.current, preview = previewGeneration.current;
+    const navigation = ++navigationSequence.current;
+    try {
+      const result = await window.desktop.synctex.inverse({ ...input, pdfUrl });
+      if (generation !== projectGeneration.current || preview !== previewGeneration.current || navigation !== navigationSequence.current || pdfUrl !== compileResultRef.current?.pdfUrl) return;
+      if (result.available && result.file && result.line) {
+        const targetPath = result.file;
+        const match = files.find((entry) => entry.kind === "file" && entry.path === targetPath)
+          ?? files.find((entry) => entry.kind === "file" && (targetPath.endsWith(`/${entry.path}`) || entry.path.endsWith(`/${targetPath}`)))
+          ?? files.find((entry) => entry.kind === "file" && entry.path.split("/").pop() === targetPath.split("/").pop());
+        const fileToOpen = match?.path ?? targetPath;
+        if (fileToOpen !== activeFileRef.current?.path) {
+          const opened = await openFile(fileToOpen);
+          if (!opened || generation !== projectGeneration.current || preview !== previewGeneration.current || navigation !== navigationSequence.current) return;
+        }
+        setJumpTarget({
+          path: fileToOpen,
+          line: result.line,
+          ...(result.column !== undefined ? { column: result.column } : {}),
+          nonce: Date.now()
+        });
+      } else if (result.reason) {
+        setError(result.reason);
+      }
+    } catch (caught) {
+      if (generation !== projectGeneration.current || preview !== previewGeneration.current || navigation !== navigationSequence.current) return;
+      setError(readableError(caught, "Could not jump to source"));
+    }
   }, [files, openFile]);
 
   const diagnostics = useMemo(() => compileResult ? [...compileResult.errors, ...compileResult.warnings] : [], [compileResult]);
@@ -466,6 +585,7 @@ export function useWorkspaceController() {
     problemsOpen,
     error,
     jumpTarget,
+    pdfJumpTarget,
     openProject,
     createProject,
     chooseProjectsDirectory,
@@ -488,6 +608,9 @@ export function useWorkspaceController() {
     setEngine,
     resizePanel,
     selectDiagnostic,
+    syncToPdf,
+    syncFromPdf,
+    setPdfJumpTarget,
     setPdfOpen,
     setProblemsOpen,
     clearError: () => setError(null)

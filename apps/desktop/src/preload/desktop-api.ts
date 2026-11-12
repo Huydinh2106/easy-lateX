@@ -36,7 +36,10 @@ export const desktopApi: DesktopApi = {
   auth: {
     state: () => ipcRenderer.invoke("account:action", "state"),
     configure: url => ipcRenderer.invoke('account:action', 'configure', url),
-    github: () => ipcRenderer.invoke("account:action", "github"),
+    signIn: input => ipcRenderer.invoke("account:action", "signIn", input),
+    signUp: input => ipcRenderer.invoke("account:action", "signUp", input),
+    resetPassword: email => ipcRenderer.invoke("account:action", "resetPassword", email),
+    updatePassword: password => ipcRenderer.invoke("account:action", "updatePassword", password),
     cancel: () => ipcRenderer.invoke("account:action", "cancel"),
     signOut: () => ipcRenderer.invoke("account:action", "signOut")
   },
@@ -80,6 +83,7 @@ export const desktopApi: DesktopApi = {
     draft: (projectId, path) => ipcRenderer.invoke("collaboration:action", "draft", {projectId, path}),
     clearDraft: (projectId, path) => ipcRenderer.invoke("collaboration:action", "clearDraft", {projectId, path}),
     cancelCompile: () => ipcRenderer.invoke("collaboration:action", "cancelCompile"),
+    forwardSync: (projectId, pdfUrl, input) => ipcRenderer.invoke("collaboration:action", "forwardSync", {projectId, pdfUrl, input}),
     compile: (projectId, files, rootDocument, engine) => ipcRenderer.invoke("collaboration:action", "compile", {projectId, files, rootDocument, engine})
   },
   project: {

@@ -2,9 +2,7 @@
 import '@testing-library/jest-dom/vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { DesktopApi } from '@easy-latex/shared-types';
 import { InvitationDialog } from '../src/renderer/features/collaboration/InvitationDialog';
-import { LegacyMigrationPanel } from '../src/renderer/features/account/LegacyMigrationPanel';
 import { AccountDialog } from '../src/renderer/features/account/AccountDialog';
 
 afterEach(cleanup);
@@ -14,46 +12,44 @@ describe('collaboration dialog flows', () => {
     const invite = vi.fn(() => new Promise<void>((_resolve,reject) => { fail = reject; }));
     const close = vi.fn();
     render(<InvitationDialog projectName="Paper" onInvite={invite} onClose={close}/>);
-    expect(document.activeElement).toBe(screen.getByLabelText('GitHub username'));
-    fireEvent.change(screen.getByLabelText('GitHub username'), {target: {value: 'alice'}});
+    expect(document.activeElement).toBe(screen.getByLabelText('Email address'));
+    expect(screen.getByLabelText('Email address')).toHaveAttribute('type','email');
+    fireEvent.change(screen.getByLabelText('Email address'), {target: {value: 'Alice@example.com'}});
     fireEvent.click(screen.getByRole('button', {name: 'Add invitation'}));
-    expect(invite).toHaveBeenCalledWith('alice');
+    expect(invite).toHaveBeenCalledWith('alice@example.com','editor');
     fireEvent.keyDown(screen.getByRole('dialog'), {key: 'Escape'});
     expect(close).not.toHaveBeenCalled();
-    fail(new Error('GitHub is temporarily unavailable'));
-    expect(await screen.findByRole('alert')).toHaveTextContent('GitHub is temporarily unavailable');
+    fail(new Error('Cloud service is temporarily unavailable'));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Cloud service is temporarily unavailable');
     expect(screen.getByRole('button', {name: 'Add invitation'})).toBeEnabled();
-    expect(screen.getByText(/including outside Easy LaTeX/)).toBeInTheDocument();
+    expect(screen.getByText(/accept the invitation from Projects/)).toBeInTheDocument();
   });
 
-  it('requires ownership verification and project review before requesting migration', async () => {
-    const migrate = vi.fn().mockResolvedValue({project: {id: 'new',name: 'Paper',role: 'owner'},limitations: 'History preserved as archives.'});
-    const link = vi.fn().mockResolvedValue(undefined);
-    const confirmation = vi.fn().mockResolvedValue(undefined);
-    const migrated = vi.fn();
-    window.desktop = {collaboration: {legacyConfirmation: confirmation,linkLegacy: link,legacyProjects: vi.fn().mockResolvedValue([{id: 'old',name: 'Paper',role: 'owner'}]),migrateLegacy: migrate}} as unknown as DesktopApi;
-    render(<LegacyMigrationPanel onClose={() => {}} onMigrated={migrated}/>);
-    fireEvent.change(screen.getByLabelText('Legacy account email'), {target: {value: 'owner@example.com'}});
-    fireEvent.click(screen.getByRole('button', {name: 'Send confirmation code'}));
-    fireEvent.change(await screen.findByLabelText('Ownership confirmation code'), {target: {value: '123456'}});
-    fireEvent.click(screen.getByRole('button', {name: 'Confirm account link'}));
-    const project = await screen.findByRole('button', {name: /Paper/});
-    expect(link).toHaveBeenCalledWith('owner@example.com','123456');
-    fireEvent.click(project);
-    expect(migrate).not.toHaveBeenCalled();
-    expect(screen.getByText(/private GitHub repository will be created/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', {name: 'Migrate project'}));
-    await waitFor(() => expect(migrated).toHaveBeenCalledOnce());
-    expect(migrate).toHaveBeenCalledExactlyOnceWith('old');
-    expect(screen.getByRole('button', {name: /Paper, migrated/})).toBeDisabled();
+  it('invites a view-only member using their email without granting editor access', async () => {
+    const invite=vi.fn().mockResolvedValue(undefined);
+    render(<InvitationDialog projectName="Paper" onInvite={invite} onClose={()=>{}}/>);
+    fireEvent.change(screen.getByLabelText('Email address'),{target:{value:'reader@example.com'}});
+    fireEvent.change(screen.getByLabelText('Permission'),{target:{value:'viewer'}});
+    expect(screen.getByText('Read and compile project files without changing them.')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button',{name:'Add invitation'}));
+    await waitFor(()=>expect(invite).toHaveBeenCalledExactlyOnceWith('reader@example.com','viewer'));
   });
 
-  it('cycles account focus through the connection summary while its inputs are collapsed', () => {
+  it('rejects an invalid email address before creating an invitation', () => {
+    const invite=vi.fn();
+    render(<InvitationDialog projectName="Paper" onInvite={invite} onClose={()=>{}}/>);
+    fireEvent.change(screen.getByLabelText('Email address'),{target:{value:'reader-without-an-email'}});
+    fireEvent.submit(screen.getByRole('dialog').querySelector('form')!);
+    expect(screen.getByLabelText('Email address')).toBeInvalid();
+    expect(invite).not.toHaveBeenCalled();
+  });
+
+  it('keeps keyboard focus inside the compact sign-in dialog', () => {
     render(<AccountDialog state={{configured: true,apiUrl: 'https://api.example.com',account: null,googleEnabled: false,recovery: false,sessionPersistence: 'secure'}} onChanged={() => {}} onClose={() => {}}/>);
     const close = screen.getByRole('button', {name: 'Close sign-in'});
     close.focus();
     fireEvent.keyDown(close, {key: 'Tab',shiftKey: true});
-    expect(document.activeElement?.tagName).toBe('SUMMARY');
+    expect(document.activeElement).toBe(screen.getByRole('button', {name: 'Forgot password?'}));
     fireEvent.keyDown(document.activeElement!, {key: 'Tab'});
     expect(document.activeElement).toBe(close);
   });

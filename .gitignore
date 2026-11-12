@@ -33,3 +33,5 @@ apps/desktop/out/
 .local/
 supabase/.temp/
 supabase/.branches/
+supabase/functions/easy-latex-api/backend.generated.js
+supabase/functions/easy-latex-api/deno.lock

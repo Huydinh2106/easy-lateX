@@ -61,3 +61,9 @@ skip_nonce_check = false
 enabled = false
 [edge_runtime]
 enabled = false
+
+# Opaque application sessions and signed GitHub webhooks are verified inside
+# the function. Supabase JWT verification would reject both of those flows.
+[functions.easy-latex-api]
+verify_jwt = false
+entrypoint = "./functions/easy-latex-api/index.ts"

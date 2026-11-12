@@ -1,4 +1,3 @@
-import { LegacyMigrationPanel } from '../account/LegacyMigrationPanel';
 import {
   AlertCircle,
   ArrowUpRight,
@@ -7,7 +6,6 @@ import {
   FilePlus2,
   FileText,
   FolderOpen,
-  FolderInput,
   GraduationCap,
   Grid2X2,
   List,
@@ -67,7 +65,6 @@ export function ProjectDashboard(props: ProjectDashboardProps) {
   const [createOpen, setCreateOpen] = useState(false);
   const [projectName, setProjectName] = useState("");
   const [creating, setCreating] = useState(false);
-  const [migrationOpen,setMigrationOpen]=useState(false);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const accountMenuRef = useRef<HTMLDivElement>(null);
   const allProjects = useMemo(() => projectList(props.recentProjects, props.sharedProjects, props.projectLinks), [props.recentProjects, props.sharedProjects, props.projectLinks]);
@@ -143,7 +140,6 @@ export function ProjectDashboard(props: ProjectDashboardProps) {
 
   return (
     <div className="dashboard-shell">
-      {migrationOpen?<LegacyMigrationPanel onClose={()=>setMigrationOpen(false)} onMigrated={()=>window.dispatchEvent(new Event("github-migration-completed"))}/>:null}
       <aside className="dashboard-sidebar">
         <div className="dashboard-brand">
           <span className="dashboard-brand-mark" aria-hidden="true">TeX</span>
@@ -177,12 +173,11 @@ export function ProjectDashboard(props: ProjectDashboardProps) {
                     </span>
                     <div className="dashboard-account-menu-meta">
                       <strong>{props.account.displayName}</strong>
-                      <small>{props.account.githubLogin ? `@${props.account.githubLogin}` : props.account.email}</small>
+                      <small>{props.account.email}</small>
                     </div>
                   </div>
                   <div className="dashboard-account-menu-divider" />
                   {props.sessionPersistence==='memory'?<p className="dashboard-session-notice"><LockKeyhole aria-hidden="true"/>Sign in again after closing the app.</p>:null}
-                  <button className="dashboard-account-menu-item" type="button" role="menuitem" disabled={props.busy} onClick={()=>{setAccountMenuOpen(false);setMigrationOpen(true);}}><FolderInput aria-hidden="true"/><span>Migrate legacy projects</span></button>
                   <button
                     className="dashboard-account-menu-item dashboard-account-menu-signout"
                     type="button"
@@ -316,7 +311,7 @@ export function ProjectDashboard(props: ProjectDashboardProps) {
                 <div className="dashboard-empty">
                   <span className="dashboard-empty-icon"><FilePlus2 aria-hidden="true" /></span>
                   <h2>{query || filter !== "all" ? "No matching projects" : "Create your first project"}</h2>
-                  <p>{query || filter !== "all" ? "Try a different search or availability filter." : "Choose or create a folder and start writing."}</p>
+                  <p>{query || filter !== "all" ? "Try a different search or availability filter." : "Create a project in the cloud, or open a folder on this device."}</p>
                   {!query && filter === "all" ? <div className="dashboard-empty-actions"><button className="button button-primary button-large" type="button" onClick={newProject}><Plus aria-hidden="true" /> New project</button><button className="button button-secondary button-large" type="button" onClick={() => void props.onOpenProject()}><FolderOpen aria-hidden="true" /> Open existing</button></div> : null}
                 </div>
               )}
@@ -329,21 +324,17 @@ export function ProjectDashboard(props: ProjectDashboardProps) {
         <div className="dashboard-dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !creating) setCreateOpen(false); }}>
           <form className="dashboard-dialog" role="dialog" aria-modal="true" aria-labelledby="create-project-title" onSubmit={(event) => void createProject(event)}>
             <header className="dashboard-dialog-header">
-              <div><h2 id="create-project-title">Create a LaTeX project</h2><p>A starter document will be created on this Mac. You can enable collaboration later.</p></div>
+              <div><h2 id="create-project-title">Create a LaTeX project</h2><p>Your project and files will be saved in the cloud.</p></div>
               <button type="button" onClick={() => setCreateOpen(false)} disabled={creating} aria-label="Close"><X aria-hidden="true" /></button>
             </header>
             <label className="dashboard-dialog-field">
               <span>Project name</span>
               <input autoFocus value={projectName} onChange={(event) => { setProjectName(event.target.value); if (props.error) props.onDismissError(); }} placeholder="My research paper" maxLength={80} />
             </label>
-            <div className="dashboard-location-field">
-              <span>Save new projects to</span>
-              <div><code title={props.projectsDirectory}>{props.projectsDirectory || "Loading default location…"}</code><button className="button button-secondary" type="button" onClick={() => void props.onChooseProjectsDirectory()} disabled={creating}>Change…</button></div>
-            </div>
             {props.error ? <p className="dashboard-dialog-error" role="alert"><AlertCircle aria-hidden="true" /> {props.error}</p> : null}
             <footer className="dashboard-dialog-actions">
               <button className="button button-secondary" type="button" onClick={() => setCreateOpen(false)} disabled={creating}>Cancel</button>
-              <button className="button button-primary" type="submit" disabled={creating || !projectName.trim() || !props.projectsDirectory}>{creating ? "Creating…" : "Create project"}</button>
+              <button className="button button-primary" type="submit" disabled={creating || !projectName.trim()}>{creating ? "Creating…" : "Create project"}</button>
             </footer>
           </form>
         </div>

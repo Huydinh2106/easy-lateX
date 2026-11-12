@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { parseOutline } from '@easy-latex/latex';
 import type { Account, CompileResult, DoneInput, EditLease, FileRevision, LatexEngine, SharedFile, SharedProject } from '@easy-latex/shared-types';
-import { LatexEditor, type LatexEditorHandle } from '../editor/LatexEditor';
+import type { LatexEditorHandle } from '../editor/LatexEditor';
+import { DocumentEditor } from '../editor/DocumentEditor';
 import { preserveLastSuccessfulPdf } from '../compile/preserveCompileResult';
 import { errorMessage, sharedFileTree } from './utils';
 import { WorkspaceFrame, type PanelSettings } from '../../components/WorkspaceFrame';
@@ -10,6 +11,7 @@ import { CompileToolbar, type SaveState } from '../compile/CompileToolbar';
 import { ProjectExplorer } from '../project/ProjectExplorer';
 import { CircleAlert, Users, X } from 'lucide-react';
 import { InvitationDialog } from './InvitationDialog';
+import type { PdfViewerJumpTarget } from '../pdf/PdfViewer';
 
 interface Props { project:SharedProject; account:Account; onClose():void; initialInvitationsOpen?:boolean; settings?:PanelSettings; onResize?(key:keyof PanelSettings,value:number,persist:boolean):void; }
 export function SharedWorkspace({project,account,onClose,settings,onResize,initialInvitationsOpen=false}:Props) {
@@ -26,6 +28,9 @@ export function SharedWorkspace({project,account,onClose,settings,onResize,initi
   const [panels,setPanels]=useState<PanelSettings>({explorerWidth:232,pdfWidth:520,problemsHeight:220});
   const [problemsOpen,setProblemsOpen]=useState(false);
   const [cursorLine,setCursorLine]=useState(1);
+  const [pdfJumpTarget,setPdfJumpTarget]=useState<PdfViewerJumpTarget|null>(null);
+  const pdfRef=useRef(pdf);pdfRef.current=pdf;
+  const navigationRequest=useRef(0);const navigationScope=useRef(0);
   const editor=useRef<LatexEditorHandle>(null);const leaseRef=useRef(lease);leaseRef.current=lease;
   const contentRef=useRef(content);contentRef.current=content;const activeRef=useRef<SharedFile|null>(null);
   const live=useRef(true);const choice=useRef(0);const draftWrites=useRef<Promise<void>>(Promise.resolve());const pendingDone=useRef<DoneInput|null>(null);
@@ -33,13 +38,14 @@ export function SharedWorkspace({project,account,onClose,settings,onResize,initi
   const saveSequence=useRef(0);const busyRef=useRef(false);
   const syncRef=useRef<()=>void>(()=>{});
   const current=files.find(f=>f.id===activeId)??null;activeRef.current=current;
+  useEffect(()=>{navigationScope.current++;navigationRequest.current++;pdfRef.current=null;setPdf(null);setPdfJumpTarget(null);return()=>{navigationScope.current++;navigationRequest.current++;};},[project.id,account.id]);
   const refresh=async()=>{
     const request=++snapshotRequest.current;const {files:f,directories:d,workspacePath:folder}=await api.snapshot(project.id);
     if(live.current&&request===snapshotRequest.current){
       if(f.some(file=>filesRef.current.some(previous=>previous.id===file.id&&previous.version!==file.version)))setStale(true);
       const editing=leaseRef.current;
       if(editing&&!f.some(file=>file.id===editing.file.id&&file.version===editing.file.version&&file.editor?.id===account.id)){
-        persist(editing.file,contentRef.current,editing.file.version);leaseRef.current=null;setLease(null);setDraft({content:contentRef.current,baseVersion:editing.file.version});setPreserved(false);setNotice('A newer published version is available. Your previous draft is kept separately on this device.');
+        persist(editing.file,contentRef.current,editing.file.version);leaseRef.current=null;setLease(null);setDraft({content:contentRef.current,baseVersion:editing.file.version});setPreserved(false);setNotice('A newer cloud version is available. Your previous draft is kept separately on this device.');
       }
       setFiles(f);setDirectories(d);setWorkspacePath(folder);setSynchronized(true);setRoot(r=>r||f.find(x=>x.path==='main.tex')?.path||f.find(x=>x.path.toLowerCase().endsWith('.tex'))?.path||'');
     }
@@ -89,7 +95,7 @@ export function SharedWorkspace({project,account,onClose,settings,onResize,initi
     if(!lease)return;
     const token=lease.token;const file=lease.file;
     const lost=(reason:string)=>{if(!live.current||leaseRef.current?.token!==token)return;persist(file,contentRef.current,file.version);leaseRef.current=null;setLease(null);setPreserved(true);setNotice('Edit access ended. Your draft is kept on this device.');setError(reason);};
-    const expiry=setTimeout(()=>lost('Edit access expired. Request Edit again before publishing.'),Math.max(0,new Date(lease.expiresAt).getTime()-Date.now()));
+    const expiry=setTimeout(()=>lost('Edit access expired. Request Edit again before saving changes to the cloud.'),Math.max(0,new Date(lease.expiresAt).getTime()-Date.now()));
     const heartbeat=setInterval(()=>{void api.renew(file.id,token).then(r=>{if(live.current&&leaseRef.current?.token===token)setLease(l=>l?.token===token?{...l,expiresAt:r.expiresAt}:l);}).catch(e=>lost(errorMessage(e)));},20_000);
     return()=>{clearTimeout(expiry);clearInterval(heartbeat);};
   },[lease?.token,lease?.expiresAt]);
@@ -97,45 +103,58 @@ export function SharedWorkspace({project,account,onClose,settings,onResize,initi
   const view=async()=>{
     const l=leaseRef.current;
     if(l){persist(l.file,contentRef.current,l.file.version);await draftWrites.current;await api.release(l.file.id,l.token);leaseRef.current=null;setLease(null);setDraft({content:contentRef.current,baseVersion:l.file.version});}
-    pendingDone.current=null;setPreserved(false);if(activeRef.current)setContent(activeRef.current.content);setNotice('View mode. Any unpublished draft is kept on this device.');
+    pendingDone.current=null;setPreserved(false);if(activeRef.current)setContent(activeRef.current.content);setNotice('View mode. Any changes not saved to the cloud are kept on this device.');
   };
   const select=(file:SharedFile)=>run(async()=>{
-    if(pendingDone.current)throw new Error('Retry Done before switching files so its result can be confirmed.');
+    if(pendingDone.current)throw new Error('Retry Done before switching files so the cloud save can be confirmed.');
     if(leaseRef.current)await view();
     const seq=++choice.current;setActiveId(file.id);setCursorLine(1);setContent(file.content);setPreserved(false);setDraft(null);setHistory(null);setNotice('');
     const d=await api.draft(project.id,file.path);if(live.current&&choice.current===seq)setDraft(d);
   });
   const acquire=()=>run(async()=>{
-    if(!current)return;if(!synchronized)throw new Error('Synchronize with GitHub before requesting Edit.');if(pendingDone.current)throw new Error('Retry Done to confirm the previous update first.');
+    if(!current)return;if(!synchronized)throw new Error('Synchronize with Supabase before requesting Edit.');if(pendingDone.current)throw new Error('Retry Done to confirm the previous cloud save first.');
     const l=await api.acquire(current.id);if(!live.current){await api.release(current.id,l.token);return;}
-    leaseRef.current=l;setLease(l);setFiles(f=>f.map(x=>x.id===l.file.id?l.file:x));setContent(l.file.content);setPreserved(false);setNotice('Only you can edit this file. Done publishes your changes and returns to View.');
+    leaseRef.current=l;setLease(l);setFiles(f=>f.map(x=>x.id===l.file.id?l.file:x));setContent(l.file.content);setPreserved(false);setNotice('Only you can edit this file. Done saves your changes to Supabase and returns to View.');
     const d=await api.draft(project.id,l.file.path);if(live.current)setDraft(d);
   });
   const done=()=>run(async()=>{
     if(!pendingDone.current){const l=leaseRef.current;if(!l)return;pendingDone.current={fileId:l.file.id,token:l.token,baseVersion:l.file.version,content:contentRef.current,requestId:crypto.randomUUID()};persist(l.file,contentRef.current,l.file.version);}
     await draftWrites.current;
-    setNotice('Saved locally. Waiting for a publication turn and publishing to GitHub…');
+    setNotice('Draft saved on this device. Saving changes to Supabase…');
     const request=pendingDone.current;
     let result:SharedFile;
     try { result=await api.done(request); }
     catch (failure) {
-      if (/Edit access has expired|Publication turn expired|newer version|permission|Please sign in|too large|request ID was already used/.test(errorMessage(failure))) {
+      if (/Edit access has expired|newer version|permission|sign in|session.*expired|too large|request ID was already used/i.test(errorMessage(failure))) {
         pendingDone.current=null;leaseRef.current=null;setLease(null);setPreserved(true);setDraft({content:request.content,baseVersion:request.baseVersion});
       }
-      setNotice('Saved locally. Publication needs a retry; your draft is preserved.');
+      setNotice('Cloud save needs a retry. Your draft is saved on this device.');
       throw failure;
     }
     await api.clearDraft(project.id,result.path);
-    pendingDone.current=null;leaseRef.current=null;setLease(null);setDraft(null);setPreserved(false);setContent(result.content);setFiles(f=>f.map(x=>x.id===result.id?result:x));setNotice('Published to GitHub. Your commit is confirmed and Edit is available.');setStale(Boolean(pdf));await refresh();
+    pendingDone.current=null;leaseRef.current=null;setLease(null);setDraft(null);setPreserved(false);setContent(result.content);setFiles(f=>f.map(x=>x.id===result.id?result:x));setNotice('Saved to Supabase. Your changes are available to collaborators.');setStale(Boolean(pdf));await refresh();
   });
   const change=(value:string)=>{const l=leaseRef.current;if(!l||busy||pendingDone.current)return;setContent(value);contentRef.current=value;setStale(Boolean(pdf));persist(l.file,value,l.file.version);};
-  const saveCurrent=()=>run(async()=>{const l=leaseRef.current;if(!l)return;persist(l.file,contentRef.current,l.file.version);await draftWrites.current;setNotice('Saved in your project folder. Click Done to publish to GitHub.');});
+  const saveCurrent=()=>run(async()=>{const l=leaseRef.current;if(!l)return;persist(l.file,contentRef.current,l.file.version);await draftWrites.current;setNotice('Draft saved on this device. Click Done to save changes to Supabase.');});
   const compile=async()=>{
     if(compiling||!root)return;setCompiling(true);setError('');setPdfOpen(true);
-    try{const snapshot=await refresh();const source=snapshot.map(f=>({path:f.path,content:f.id===current?.id&&(leaseRef.current||preserved)?contentRef.current:f.content,encoding:f.encoding}));const result=await api.compile(project.id,source,root,engine);setPdf(p=>preserveLastSuccessfulPdf(p,result));setStale(!result.success);if(!result.success)setError(result.errors[0]?.message??'Compilation failed.');}
-    catch(e){setError(errorMessage(e));}finally{if(live.current)setCompiling(false);}
+    const scope=navigationScope.current;
+    try{const snapshot=await refresh();if(!live.current||scope!==navigationScope.current)return;const source=snapshot.map(f=>({path:f.path,content:f.id===current?.id&&(leaseRef.current||preserved)?contentRef.current:f.content,encoding:f.encoding}));const result=await api.compile(project.id,source,root,engine);if(!live.current||scope!==navigationScope.current)return;if(result.pdfUrl){navigationRequest.current++;setPdfJumpTarget(null);}setPdf(p=>{const next=preserveLastSuccessfulPdf(p,result);pdfRef.current=next;return next;});setStale(!result.success);if(!result.success)setError(result.errors[0]?.message??'Compilation failed.');}
+    catch(e){if(live.current&&scope===navigationScope.current)setError(errorMessage(e));}finally{if(live.current&&scope===navigationScope.current)setCompiling(false);}
   };
-  const leave=()=>run(async()=>{if(pendingDone.current)throw new Error('Retry Done before leaving so its result can be confirmed.');if(leaseRef.current)await view();await draftWrites.current;onClose();});
+  const syncToPdf=async(line=cursorLine)=>{
+    const file=current;const pdfUrl=pdfRef.current?.pdfUrl;
+    if(!file||!pdfUrl){setError('Compile the project before jumping to the PDF.');return;}
+    const request=++navigationRequest.current;const scope=navigationScope.current;
+    const active=()=>live.current&&scope===navigationScope.current&&request===navigationRequest.current&&pdfRef.current?.pdfUrl===pdfUrl&&activeRef.current?.id===file.id;
+    try{
+      const result=await api.forwardSync(project.id,pdfUrl,{file:file.path,line});
+      if(!active())return;
+      if(!result.available||result.page===undefined||result.x===undefined||result.y===undefined){setError(result.reason??'No PDF position was found for this source line.');return;}
+      setError('');setPdfOpen(true);setPdfJumpTarget({page:result.page,x:result.x,y:result.y,nonce:request});
+    }catch(e){if(active())setError(errorMessage(e));}
+  };
+  const leave=()=>run(async()=>{if(pendingDone.current)throw new Error('Retry Done before leaving so the cloud save can be confirmed.');if(leaseRef.current)await view();await draftWrites.current;onClose();});
   const tree=sharedFileTree(files,directories);
   const diagnostics=pdf?[...pdf.errors,...pdf.warnings]:[];
   const createFile=async(filePath:string):Promise<string|null>=>{
@@ -159,15 +178,15 @@ export function SharedWorkspace({project,account,onClose,settings,onResize,initi
     return imported;
   };
   return <WorkspaceFrame settings={settings??panels} onResize={(key,value,persist)=>{if(onResize)onResize(key,value,persist);else setPanels(p=>({...p,[key]:value}));}}
-    pdfOpen={pdfOpen} pdfUrl={pdf?.pdfUrl} pdfStale={stale} onClosePdf={()=>setPdfOpen(false)}
+    pdfOpen={pdfOpen} pdfUrl={pdf?.pdfUrl} pdfStale={stale} pdfJumpTarget={pdfJumpTarget} onClosePdf={()=>setPdfOpen(false)}
     problemsOpen={problemsOpen} diagnostics={diagnostics} log={pdf?.log??''} onToggleProblems={()=>setProblemsOpen(!problemsOpen)}
     onSelectDiagnostic={diagnostic=>{const file=files.find(f=>f.path===diagnostic.file?.replace(/^\/workspace\//,''));if(file&&diagnostic.line)void select(file).then(()=>requestAnimationFrame(()=>editor.current?.jumpTo(diagnostic.line!,diagnostic.column)));}}
-    status={<StatusBar file={current?.path} engine={engine} git={{available:true,isRepository:true}} collaboration/>}
+    status={<StatusBar file={current?.path} engine={engine} git={{available:false,isRepository:false}} collaboration/>}
     overlay={<>
       {error?<div className="toast toast-error" role="alert"><CircleAlert/><span>{error}</span><button type="button" aria-label="Dismiss" onClick={()=>setError('')}><X/></button></div>:null}
-      {shareOpen?<InvitationDialog projectName={project.name} onClose={()=>setShareOpen(false)} onInvite={async username=>{
-        await api.invite(project.id,username,'editor');
-        setNotice('GitHub invitation sent. They can accept it in Projects after signing in with GitHub.');
+      {shareOpen?<InvitationDialog projectName={project.name} onClose={()=>setShareOpen(false)} onInvite={async (email,role)=>{
+        await api.invite(project.id,email,role);
+        setNotice('Invitation added. They can accept it in Projects after signing in with this email address.');
         setShareOpen(false);
       }}/>:null}
     </>}
@@ -175,7 +194,7 @@ export function SharedWorkspace({project,account,onClose,settings,onResize,initi
       engine={engine} saveState={saveState} compileEvent={{phase:compiling?'running':pdf?(pdf.success?'success':pdf.cancelled?'cancelled':'failed'):'idle',message:compiling?'Compiling…':pdf?(pdf.success?'Compilation complete':pdf.cancelled?'Compilation cancelled':'Compilation failed'):'Ready to compile'}}
       pdfOpen={pdfOpen} disabled={busy} onShowProjects={()=>void leave()} onSave={()=>void saveCurrent()}
       onSetRoot={setRoot} onSetEngine={setEngine} onCompile={()=>void compile()} onCancel={()=>void api.cancelCompile().catch(e=>setError(errorMessage(e)))} onTogglePdf={()=>setPdfOpen(!pdfOpen)}
-      status={lease?<span className="quiet-status" title={`Signed in as ${account.displayName}`}>{saveState==='failed'?'Save failed':saveState==='saving'?'Saving…':'Saved locally · Editing'}</span>:undefined}
+      status={<span className="quiet-status" title={`Signed in as ${account.email}`}>{saveState==='failed'?'Save failed':saveState==='saving'?'Saving draft locally…':pendingDone.current?'Saved locally · Cloud save pending':lease?'Saved locally · Click Done to save to cloud':preserved?'Local draft · Request Edit to save to cloud':synchronized?'Saved to cloud':'Connecting to cloud…'}</span>}
       actions={project.role==='owner'?<button className="button button-secondary" type="button" disabled={busy} onClick={()=>setShareOpen(true)}><Users/> Collaborate</button>:<span className="quiet-status"><Users/> Collaboration enabled</span>}/>
     }
     explorer={<ProjectExplorer files={tree} selectedPath={current?.path} rootDocument={root} outlineFilePath={current?.path} outlineItems={current?.encoding==='utf8'?parseOutline(content,current.path):[]} outlineActiveLine={cursorLine}
@@ -192,7 +211,7 @@ export function SharedWorkspace({project,account,onClose,settings,onResize,initi
         <div className="shared-file-toolbar"><div>
           <button className="shared-mode-switch" type="button" role="switch" aria-label="Edit mode" aria-checked={Boolean(lease)}
             disabled={busy||Boolean(pendingDone.current)||(!lease&&(!synchronized||project.role==='viewer'||!current||Boolean(current.editor)||current.encoding==='base64'))}
-            title={lease?'Switch to View and keep your unpublished draft':project.role==='viewer'?'You have view-only access':current?.encoding==='base64'?'Attachments are view-only':current?.editor?`${current.editor.displayName} is editing`: 'Switch to Edit'}
+            title={lease?'Switch to View and keep your local draft':project.role==='viewer'?'You have view-only access':current?.encoding==='base64'?'Attachments are view-only':current?.editor?`${current.editor.displayName} is editing`: 'Switch to Edit'}
             onClick={()=>{if(lease)void run(view);else void acquire();}}>
             <span className="shared-mode-switch-thumb" aria-hidden="true"/>
             <span className="shared-mode-switch-label" aria-hidden="true">View</span>
@@ -201,13 +220,13 @@ export function SharedWorkspace({project,account,onClose,settings,onResize,initi
           <button className="button button-primary" type="button" disabled={busy||(!lease&&!pendingDone.current)} onClick={()=>void done()}>{pendingDone.current?'Retry Done':'Done'}</button>
           <button className="button button-secondary" type="button" disabled={!current||busy||current.encoding==='base64'} onClick={()=>void run(async()=>{setHistory(history?null:await api.history(current!.id));})}>History</button>
         </div></div>
-        {!synchronized?<p className="shared-notice" role="status">Not synchronized with GitHub. Edit is unavailable. <button className="button button-secondary" type="button" disabled={busy} onClick={()=>syncRef.current()}>Retry synchronization</button></p>:null}
-        {workspacePath?<p className="shared-notice" title={workspacePath}>Project folder: <code>{workspacePath}</code></p>:null}
+        {!synchronized?<p className="shared-notice" role="status">Not synchronized with Supabase. Edit is unavailable. <button className="button button-secondary" type="button" disabled={busy} onClick={()=>syncRef.current()}>Retry synchronization</button></p>:null}
+        {workspacePath?<p className="shared-notice" title={workspacePath}>Local working folder: <code>{workspacePath}</code></p>:null}
         {notice?<p className="shared-notice" role="status">{notice}</p>:null}
         {current?.editor&&!lease?<p className="shared-notice">{current.editor.displayName} is editing. You can keep reading.</p>:null}
-        {preserved?<p className="shared-notice">Unpublished draft shown below. Request Edit to review it against the latest shared version.</p>:null}
-        {draft&&draft.content!==current?.content?<details className="shared-draft"><summary>A saved draft is available {draft.baseVersion!==current?.version?'from an older version':''}</summary><div className="shared-draft-comparison"><label>Latest shared version<textarea readOnly value={current?.content??''}/></label><label>Your saved draft<textarea readOnly value={draft.content}/></label></div><button className="button button-secondary" type="button" disabled={!lease||busy} onClick={()=>{setContent(draft.content);contentRef.current=draft.content;persist(lease!.file,draft.content,lease!.file.version);setDraft(null);setNotice('Draft restored into your editor. Review it, then click Done to publish.');}}>Use draft in editor</button></details>:null}
-        <div className="shared-source">{current?.encoding==='base64'?<div className="shared-attachment"><strong>{current.path}</strong><p>Project attachment · View only</p>{/\.(png|jpg|jpeg|svg)$/i.test(current.path)?<img alt={current.path} src={`data:${current.path.endsWith('.svg')?'image/svg+xml':current.path.endsWith('.png')?'image/png':'image/jpeg'};base64,${current.content}`}/>:<p>This attachment is included when the project is compiled.</p>}</div>:current?<LatexEditor ref={editor} path={current.path} value={content} diagnostics={pdf?[...pdf.errors,...pdf.warnings]:[]} readOnly={!lease||busy||Boolean(pendingDone.current)} onChange={change} onCursorLineChange={setCursorLine} onSave={()=>void saveCurrent()}/>:<p>No files yet.</p>}</div>
+        {preserved?<p className="shared-notice">Local draft shown below. Request Edit to compare it with the latest cloud version.</p>:null}
+        {draft&&draft.content!==current?.content?<details className="shared-draft"><summary>A saved draft is available {draft.baseVersion!==current?.version?'from an older version':''}</summary><div className="shared-draft-comparison"><label>Latest cloud version<textarea readOnly value={current?.content??''}/></label><label>Your saved draft<textarea readOnly value={draft.content}/></label></div><button className="button button-secondary" type="button" disabled={!lease||busy} onClick={()=>{setContent(draft.content);contentRef.current=draft.content;persist(lease!.file,draft.content,lease!.file.version);setDraft(null);setNotice('Draft restored into your editor. Review it, then click Done to save to the cloud.');}}>Use draft in editor</button></details>:null}
+        <div className="shared-source">{current?.encoding==='base64'?<div className="shared-attachment"><strong>{current.path}</strong><p>Project attachment · View only</p>{/\.(png|jpg|jpeg|svg)$/i.test(current.path)?<img alt={current.path} src={`data:${current.path.endsWith('.svg')?'image/svg+xml':current.path.endsWith('.png')?'image/png':'image/jpeg'};base64,${current.content}`}/>:<p>This attachment is included when the project is compiled.</p>}</div>:current?<DocumentEditor ref={editor} path={current.path} value={content} diagnostics={pdf?[...pdf.errors,...pdf.warnings]:[]} readOnly={!lease||busy||Boolean(pendingDone.current)} onChange={change} onCursorLineChange={setCursorLine} onSave={()=>void saveCurrent()} onSyncToPdf={line=>void syncToPdf(line)}/>:<p>No files yet.</p>}</div>
         {history?<section className="shared-history" aria-label="File history"><h2>File history</h2>{history.map(r=><details key={r.id}><summary>Version {r.version} · {r.author} · {new Date(r.createdAt).toLocaleString()}</summary><textarea aria-label={`Version ${r.version} content`} readOnly value={r.content}/></details>)}</section>:null}
   </WorkspaceFrame>;
 }

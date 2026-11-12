@@ -5,10 +5,19 @@ import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "re
 
 GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
+export interface PdfViewerJumpTarget {
+  page: number;
+  x: number;
+  y: number;
+  nonce: number;
+}
+
 interface PdfViewerProps {
   url?: string | undefined;
   stale: boolean;
   onClose(): void;
+  onInverseSync?: ((input: { page: number; x: number; y: number }) => void) | undefined;
+  jumpTarget?: PdfViewerJumpTarget | null | undefined;
 }
 
 // A fresh canvas for each scale prevents a cancelled render from sharing its
@@ -46,17 +55,93 @@ function PageCanvas({ page, scale, onError }: { page: PDFPageProxy; scale: numbe
   return <canvas ref={canvasRef} aria-hidden="true" />;
 }
 
-function PdfPage({ document, number, scale, estimatedSize, viewportRef }: {
+interface RegionBox {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+function extractLineBoxes(page: PDFPageProxy, textContent: { items?: unknown[] }): RegionBox[] {
+  if (!textContent?.items || !Array.isArray(textContent.items)) return [];
+  const viewport = page.getViewport({ scale: 1 });
+  const rawBoxes: RegionBox[] = [];
+
+  for (const rawItem of textContent.items) {
+    if (!rawItem || typeof rawItem !== "object") continue;
+    const item = rawItem as { str?: string; transform?: number[]; width?: number; height?: number };
+    if (!item.str || !item.str.trim() || !item.transform || !Array.isArray(item.transform)) continue;
+    const b = item.transform[1] ?? 0;
+    const d = item.transform[3] ?? 10;
+    const tx = item.transform[4] ?? 0;
+    const ty = item.transform[5] ?? 0;
+    const fontHeight = item.height || Math.hypot(b, d) || 12;
+    const itemWidth = item.width || 50;
+
+    let left = tx;
+    let top = ty;
+    let width = itemWidth;
+    let height = fontHeight;
+
+    if (typeof viewport.convertToViewportRectangle === "function") {
+      const rect = viewport.convertToViewportRectangle([tx, ty, tx + itemWidth, ty + fontHeight]) as unknown[];
+      const r0 = typeof rect[0] === "number" ? rect[0] : tx;
+      const r1 = typeof rect[1] === "number" ? rect[1] : ty;
+      const r2 = typeof rect[2] === "number" ? rect[2] : tx + itemWidth;
+      const r3 = typeof rect[3] === "number" ? rect[3] : ty + fontHeight;
+      left = Math.min(r0, r2);
+      top = Math.min(r1, r3);
+      width = Math.abs(r2 - r0);
+      height = Math.abs(r3 - r1);
+    }
+
+    if (width > 0 && height > 0) {
+      rawBoxes.push({ left, top, width, height });
+    }
+  }
+
+  // Merge items on the same line (similar top, close horizontal distance)
+  const lines: RegionBox[] = [];
+  const sorted = rawBoxes.sort((a, b) => a.top - b.top || a.left - b.left);
+  for (const box of sorted) {
+    const last = lines[lines.length - 1];
+    if (last && Math.abs(last.top - box.top) < 6 && box.left - (last.left + last.width) < 25) {
+      const right = Math.max(last.left + last.width, box.left + box.width);
+      const bottom = Math.max(last.top + last.height, box.top + box.height);
+      last.left = Math.min(last.left, box.left);
+      last.top = Math.min(last.top, box.top);
+      last.width = right - last.left;
+      last.height = bottom - last.top;
+    } else {
+      lines.push({ ...box });
+    }
+  }
+  return lines;
+}
+
+function PdfPage({
+  document,
+  number,
+  scale,
+  estimatedSize,
+  viewportRef,
+  onPageClick,
+  highlight
+}: {
   document: PDFDocumentProxy;
   number: number;
   scale: number;
   estimatedSize: { width: number; height: number };
   viewportRef: RefObject<HTMLDivElement | null>;
+  onPageClick?(event: React.MouseEvent<HTMLDivElement>, pageNumber: number): void;
+  highlight?: { x: number; y: number } | null;
 }) {
   const frameRef = useRef<HTMLDivElement>(null);
   const [nearby, setNearby] = useState(false);
   const [page, setPage] = useState<PDFPageProxy | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [textRegions, setTextRegions] = useState<RegionBox[]>([]);
+  const [hoverRegion, setHoverRegion] = useState<RegionBox | null>(null);
 
   useEffect(() => {
     const frame = frameRef.current;
@@ -79,18 +164,95 @@ function PdfPage({ document, number, scale, estimatedSize, viewportRef }: {
     return () => { disposed = true; };
   }, [document, number, nearby, page]);
 
+  useEffect(() => {
+    if (!page || typeof page.getTextContent !== "function") {
+      setTextRegions([]);
+      return;
+    }
+    let disposed = false;
+    void page.getTextContent().then((content) => {
+      if (!disposed) {
+        setTextRegions(extractLineBoxes(page, content));
+      }
+    }).catch(() => {
+      // ignore text content failure
+    });
+    return () => { disposed = true; };
+  }, [page]);
+
   const size = page?.getViewport({ scale: 1 }) ?? estimatedSize;
   return (
-    <div ref={frameRef} className="pdf-page" role="img" aria-label={`Page ${number}`} data-page-number={number}
-      style={{ width: size.width * scale, aspectRatio: `${size.width} / ${size.height}` }}>
+    <div
+      ref={frameRef}
+      className={`pdf-page${hoverRegion ? " is-hovering-jumpable" : ""}`}
+      role="img"
+      aria-label={`Page ${number}`}
+      data-page-number={number}
+      style={{ width: size.width * scale, aspectRatio: `${size.width} / ${size.height}` }}
+      onMouseMove={(event) => {
+        const rect = event.currentTarget.getBoundingClientRect();
+        const mouseX = (event.clientX - rect.left) / scale;
+        const mouseY = (event.clientY - rect.top) / scale;
+        const hit = textRegions.find((box) => (
+          mouseX >= box.left - 4 &&
+          mouseX <= box.left + box.width + 4 &&
+          mouseY >= box.top - 2 &&
+          mouseY <= box.top + box.height + 2
+        ));
+        // DEBUG
+        setHoverRegion(hit ?? null);
+      }}
+      onMouseLeave={() => {
+        setHoverRegion(null);
+      }}
+      onClick={(event) => {
+        if (event.metaKey || event.ctrlKey) {
+          event.preventDefault();
+          onPageClick?.(event, number);
+        }
+      }}
+      onDoubleClick={(event) => {
+        event.preventDefault();
+        onPageClick?.(event, number);
+      }}
+    >
       {nearby && page && !error ? <PageCanvas key={scale} page={page} scale={scale} onError={setError} /> : null}
+      {hoverRegion ? (
+        <div
+          className="pdf-hover-highlight"
+          style={{
+            left: `${(hoverRegion.left - 2) * scale}px`,
+            top: `${(hoverRegion.top - 1) * scale}px`,
+            width: `${(hoverRegion.width + 4) * scale}px`,
+            height: `${(hoverRegion.height + 2) * scale}px`
+          }}
+          aria-hidden="true"
+        />
+      ) : null}
+      {highlight ? (
+        <>
+          <div
+            className="pdf-synctex-line-highlight"
+            style={{ top: `${highlight.y * scale - 12}px` }}
+            aria-hidden="true"
+          />
+          <div
+            className="pdf-synctex-highlight"
+            style={{
+              left: `${highlight.x * scale}px`,
+              top: `${highlight.y * scale}px`
+            }}
+            aria-hidden="true"
+          />
+        </>
+      ) : null}
       {error ? <div className="pdf-page-message pdf-error">Page {number}: {error}</div> : null}
       {!page && !error ? <div className="pdf-page-message">Page {number}</div> : null}
     </div>
   );
 }
 
-export function PdfViewer({ url, stale, onClose }: PdfViewerProps) {
+export function PdfViewer({ url, stale, onClose, onInverseSync, jumpTarget }: PdfViewerProps) {
   const viewportRef = useRef<HTMLDivElement>(null);
   const cancelPageEdit = useRef(false);
   const scrollAnchor = useRef<{ number: number; fraction: number } | null>(null);
@@ -101,6 +263,7 @@ export function PdfViewer({ url, stale, onClose }: PdfViewerProps) {
   const [width, setWidth] = useState(480);
   const [manualScale, setManualScale] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [highlight, setHighlight] = useState<{ page: number; x: number; y: number } | null>(null);
   const document = loaded && loaded.url === url ? loaded.document : null;
   const size = loaded?.size ?? { width: 595, height: 842 };
   const fitScale = Math.max(0.1, (width - 32) / size.width);
@@ -158,12 +321,34 @@ export function PdfViewer({ url, stale, onClose }: PdfViewerProps) {
     return () => { disposed = true; void task.destroy(); };
   }, [url]);
 
+  useEffect(() => {
+    if (!jumpTarget || !document || !viewportRef.current) { setHighlight(null); return; }
+    const viewport = viewportRef.current;
+    const frame = viewport.querySelector<HTMLElement>(`[data-page-number="${jumpTarget.page}"]`);
+    if (frame) {
+      const bounds = frame.getBoundingClientRect();
+      const viewportBounds = viewport.getBoundingClientRect();
+      const top = Math.max(0, viewport.scrollTop + bounds.top - viewportBounds.top + jumpTarget.y * scale - viewport.clientHeight / 2);
+      const left = Math.max(0, viewport.scrollLeft + bounds.left - viewportBounds.left + jumpTarget.x * scale - viewport.clientWidth / 2);
+      if (typeof viewport.scrollTo === "function") {
+        viewport.scrollTo({ top, left, behavior: "smooth" });
+      } else {
+        viewport.scrollTop = top;
+        viewport.scrollLeft = left;
+      }
+    } else { setHighlight(null); return; }
+    setPage(jumpTarget.page);
+    setHighlight({ page: jumpTarget.page, x: jumpTarget.x, y: jumpTarget.y });
+    const timer = setTimeout(() => setHighlight(null), 2500);
+    return () => clearTimeout(timer);
+  }, [jumpTarget, scale, document]);
+
   const updateCurrentPage = () => {
     rememberPosition();
     const viewport = viewportRef.current;
     if (!viewport) return;
     const bounds = viewport.getBoundingClientRect();
-    const readingLine = bounds.top + bounds.height * 0.3;
+    const readingLine = bounds.top + bounds.height * 0.5;
     const pages = viewport.querySelectorAll<HTMLElement>("[data-page-number]");
     for (const frame of pages) {
       if (frame.getBoundingClientRect().bottom >= readingLine) {
@@ -183,10 +368,22 @@ export function PdfViewer({ url, stale, onClose }: PdfViewerProps) {
     setEditingPage(false);
   };
 
+  const handlePageClick = (event: React.MouseEvent<HTMLDivElement>, pageNumber: number) => {
+    const frame = event.currentTarget;
+    const bounds = frame.getBoundingClientRect();
+    const clickX = (event.clientX - bounds.left) / scale;
+    const clickY = (event.clientY - bounds.top) / scale;
+    onInverseSync?.({ page: pageNumber, x: clickX, y: clickY });
+  };
+
   return (
     <aside className="pdf-panel" aria-label="PDF preview">
       <header className="pdf-toolbar">
-        <div className="pdf-title"><FileText aria-hidden="true" /><span>PDF</span>{stale ? <small>Out of date</small> : null}</div>
+        <div className="pdf-title" title="SyncTeX: Double-click or ⌘-click PDF to jump to source">
+          <FileText aria-hidden="true" />
+          <span>PDF</span>
+          {stale ? <small>Out of date</small> : null}
+        </div>
         <div className="pdf-controls">
           {document ? <div className="pdf-page-control">
             <input aria-label="Go to page" title="Go to page · Scroll to browse all pages" inputMode="numeric" value={editingPage ? pageDraft : page}
@@ -210,7 +407,16 @@ export function PdfViewer({ url, stale, onClose }: PdfViewerProps) {
         {error ? <div className="pdf-empty pdf-error"><strong>PDF preview failed</strong><span>{error}</span></div> : null}
         {document && !error ? <div className="pdf-pages" key={url}>
           {Array.from({ length: document.numPages }, (_, index) => (
-            <PdfPage key={index + 1} document={document} number={index + 1} scale={scale} estimatedSize={size} viewportRef={viewportRef} />
+            <PdfPage
+              key={index + 1}
+              document={document}
+              number={index + 1}
+              scale={scale}
+              estimatedSize={size}
+              viewportRef={viewportRef}
+              onPageClick={handlePageClick}
+              highlight={highlight?.page === index + 1 ? highlight : null}
+            />
           ))}
         </div> : null}
       </div>

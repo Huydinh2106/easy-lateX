@@ -30,8 +30,9 @@ The MVP hierarchy is:
 
 Optional authentication and shared projects extend this release through the
 View/Edit/Done contract in `docs/COLLABORATION.md`. Local projects remain available
-without an account. AI writing, terminal access, realtime coediting, and a
-visual/WYSIWYG editor remain outside this release.
+without an account. AI writing, terminal access and realtime coediting remain outside this release.
+Visual editing is an additional presentation of the same LaTeX source buffer,
+with the supported scope and preservation rules defined in section 9.
 
 ## 2. Project dashboard and canonical workspace
 
@@ -306,6 +307,42 @@ Required behavior:
 
 Do not add a minimap, activity bar, terminal, extension marketplace, or generic
 IDE decoration. Source text uses the neutral surface and the product token system.
+
+### Visual mode
+
+- One pill switch above the active editor is labelled `Code` and `Visual`, with
+  a sliding selected segment and a named keyboard-accessible switch. It appears
+  for `.tex` files; other text files retain the ordinary source editor. Code is
+  the initial presentation. Switching modes never saves or rewrites the source.
+- Both modes share one workspace buffer, save state, external-conflict handling,
+  compile flow and collaboration access rules. Visual mode never grants Edit
+  access. File outline navigation works in either mode; protected source and
+  preamble locations open at the relevant Code position.
+- The visual surface uses a restrained document sheet, readable document
+  typography and a compact wrapping formatting toolbar. The sheet is a writing
+  projection, not an exact paginated PDF; the footer points to PDF for final layout.
+- Supported edits include prose, headings, bold/italic/underline on selected text,
+  simple bulleted/numbered lists, abstract/quote content and existing title,
+  author and date fields. Enter splits paragraphs or list items; an empty list
+  item exits the list. Shift+Enter inserts a LaTeX line break. Backspace/Delete
+  can join neighboring prose or items in the same list. Blank fields use UI
+  placeholders, never example text inserted into the user's source.
+- Visual edits patch only the affected source range. Switching or focusing must
+  preserve every byte. Preambles, comments, custom commands, references and
+  unsupported structures are retained, rather than regenerated from HTML.
+  Paste accepts plain text and typed LaTeX-special characters are escaped.
+- Equations render locally through KaTeX with trust disabled and bounded macro
+  expansion. Unsupported math retains its protected fallback. Math editing,
+  tables, figures, custom environments, nested/custom lists and arbitrary TeX
+  programming use clearly labelled protected blocks or inline tokens, with a
+  visible Code action at the correct source location. The PDF remains authoritative.
+- Undo/redo, save and formatting shortcuts work in Visual mode. Visual history
+  survives a mode switch and resets when an external source replacement arrives.
+  Vietnamese IME composition commits after composition ends. View-only fields
+  remain readable and editing/insertion controls are disabled.
+- Toolbar controls wrap on narrow editor widths and the document scrolls within
+  its panel. All controls have accessible names, focus states and reduced-motion
+  support. Hover is never required to discover the Code action.
 
 ## 10. Save and external changes
 

@@ -1,14 +1,15 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile, rename, unlink, mkdtemp, rm, realpath, lstat } from 'node:fs/promises';
 import path from 'node:path';
-import type { CollaborationApi, CompileResult, EditLease, LatexEngine, ProjectFileInput, SharedProject, SharedProjectInput, SharedProjectSnapshot, DoneInput, SharedFile, GitFileMetadata, PublishTicket, PublishChange } from '@easy-latex/shared-types';
+import { gunzipSync } from 'node:zlib';
+import { forwardSearch, parseSyncTeX, type SyncTeXData } from '@easy-latex/latex';
+import type { CollaborationApi, CompileResult, EditLease, LatexEngine, ProjectFileInput, SharedProject, SharedProjectInput, SharedProjectSnapshot, DoneInput, SharedFile } from '@easy-latex/shared-types';
 import type { AccountManager } from '../account/AccountManager';
 import { FileManager } from '../filesystem/FileManager';
 import { DockerLatexCompiler } from '../compiler/DockerLatexCompiler';
 import type { ArtifactRegistry } from '../compiler/ArtifactRegistry';
 import { ProjectLinks } from './ProjectLinks';
 import { ProjectEventStream } from './ProjectEventStream';
-import { GitCheckout, gitBlobSha } from './GitCheckout';
 import { normalizeApiUrl } from '../account/ApiConfiguration';
 import { SharedWorkingDirectory } from './SharedWorkingDirectory';
 
@@ -18,7 +19,7 @@ export class CollaborationManager implements CollaborationApi {
   private readonly compiler = new DockerLatexCompiler(process.env.EASY_LATEX_DOCKER_IMAGE?.trim() || undefined);
   private building = false;
   private readonly projectLinks:ProjectLinks;
-  private readonly metadata=new Map<string,GitFileMetadata>();
+  private readonly metadata=new Map<string,SharedFile>();
   private readonly operations=new Map<string,Promise<unknown>>();
   private readonly activations=new Map<string,Promise<SharedProject>>();
   private readonly eventStreams=new Set<ProjectEventStream>();
@@ -26,6 +27,7 @@ export class CollaborationManager implements CollaborationApi {
   private readonly folders=new Map<string,SharedWorkingDirectory>();
   private readonly snapshots=new Map<string,Promise<SharedProjectSnapshot>>();
   private readonly storageDirectories=new Map<string,Promise<string>>();
+  private readonly previewSyncTeX=new Map<string,{projectId:string;accountId:string;epoch:number;data:SyncTeXData|null}>();
   private epoch=0;
   constructor(private readonly accounts: AccountManager, private apiUrl: string | undefined, private readonly dataDirectory: string, private readonly artifacts: ArtifactRegistry, private readonly chooseSource?:()=>Promise<string|null>, private readonly currentSource?:()=>string, private readonly chooseItems?:(kind:'files'|'folder')=>Promise<string[]>, private readonly projectsDirectory?:()=>Promise<string>) {
     this.projectLinks=new ProjectLinks(path.join(dataDirectory,'project-links.json'));
@@ -44,7 +46,7 @@ export class CollaborationManager implements CollaborationApi {
     void stream.run().finally(()=>this.eventStreams.delete(stream));
     return()=>{stream.stop();this.eventStreams.delete(stream);for(const [id,edit] of this.edits)if(edit.file.projectId===projectId)this.edits.delete(id);};
   };
-  stopUpdates():void {this.epoch++;for(const stream of this.eventStreams)stream.stop();this.eventStreams.clear();this.metadata.clear();this.edits.clear();this.folders.clear();this.snapshots.clear();}
+  stopUpdates():void {this.epoch++;for(const stream of this.eventStreams)stream.stop();this.eventStreams.clear();this.metadata.clear();this.edits.clear();this.folders.clear();this.snapshots.clear();this.previewSyncTeX.clear();}
   private checkEpoch(epoch:number):void {if(epoch!==this.epoch)throw new Error('Account or server changed. Reopen the project.');}
   private storageDirectory():Promise<string>{
     if(!this.apiUrl)throw new Error('Collaboration backend is not configured');
@@ -82,7 +84,7 @@ export class CollaborationManager implements CollaborationApi {
     catch { throw new Error('Could not connect. Your local draft is preserved.'); }
     const value:unknown=await response.json();
     this.checkEpoch(epoch);
-    if(!response.ok) { if(value && typeof value==='object' && 'installationUrl' in value && typeof value.installationUrl==='string')await this.accounts.openInstallation(value.installationUrl); const message=value && typeof value==='object' && 'message' in value && typeof value.message==='string'?value.message:'Collaboration request failed';throw new Error(message); }
+    if(!response.ok) { const message=value && typeof value==='object' && 'message' in value && typeof value.message==='string'?value.message:'Collaboration request failed';throw new Error(message); }
     return value as T;
   }
   importProject:CollaborationApi['importProject']=async()=>{
@@ -145,90 +147,34 @@ export class CollaborationManager implements CollaborationApi {
     return {name:path.basename(source),files:inputs,directories};
   }
   projects:CollaborationApi['projects']=()=>this.request('/projects');
-  private async checkout(projectId:string,requestId?:string):Promise<GitCheckout>{
-    const epoch=this.epoch;
-    const project=await this.request<SharedProject>(`/projects/${projectId}`);
-    const account=(await this.accounts.state()).account;
-    if(!account||!project.repository)throw new Error('Please sign in and retry repository activation');
-    const directory=await this.storageDirectory();this.checkEpoch(epoch);
-    return new GitCheckout(directory,account,projectId,project.repository,write=>{this.checkEpoch(epoch);return this.request(`/projects/${projectId}/git-credentials`,{write,...(requestId?{requestId}:{})});});
-  }
   private async serial<T>(id:string,fn:()=>Promise<T>):Promise<T>{
     const previous=this.operations.get(id)??Promise.resolve();
     const work=previous.catch(()=>undefined).then(fn);this.operations.set(id,work);
     try{return await work;}finally{if(this.operations.get(id)===work)this.operations.delete(id);}
   }
-  create:CollaborationApi['create']=async input=>{
-    const requestId=input.requestId??randomUUID();
-    await this.accounts.installation();
-    const project=await this.request<SharedProject>('/projects',{name:input.name,requestId});
-    let entries=input.files??[{path:'main.tex',content:'\\documentclass{article}\n\\begin{document}\nStart writing here.\n\\end{document}\n'}];
-    // Initial import is a separate durable publication. No source bytes go to the API.
-    const initialId=this.stableId(`initial:${project.id}:${requestId}`);
-    const account=(await this.accounts.state()).account;
-    if(!account)throw new Error('Please sign in');
-    const activationFile=path.join(await this.storageDirectory(),'activations',account.id,`${project.id}.json`);
-    try{entries=JSON.parse(await readFile(activationFile,'utf8')) as ProjectFileInput[];}
-    catch(e){if((e as NodeJS.ErrnoException).code!=='ENOENT')throw e;entries=this.withDirectories(entries,input.directories??[]);await this.saveJson(activationFile,entries);}
-    await this.serial(project.id,()=>this.publish(project.id,initialId,entries,{}));
-    return (await this.projects()).find(p=>p.id===project.id)!;
-  };
-  private stableId(value:string):string{const bytes=createHash('sha256').update(value).digest().subarray(0,16);bytes[6]=(bytes[6]!&15)|64;bytes[8]=(bytes[8]!&63)|128;const h=bytes.toString('hex');return `${h.slice(0,8)}-${h.slice(8,12)}-${h.slice(12,16)}-${h.slice(16,20)}-${h.slice(20)}`;}
-  private withDirectories(files:ProjectFileInput[],directories:string[]):ProjectFileInput[]{
-    const result=[...files];
-    for(const d of new Set(directories)){validateSharedDirectory(d);if(!files.some(f=>f.path.startsWith(`${d}/`))&&!directories.some(other=>other!==d&&other.startsWith(`${d}/`)))result.push({path:`${d}/.gitkeep`,content:'',encoding:'utf8'});}
-    return result;
-  }
-  private validateEntries(entries:ProjectFileInput[]):void{
-    if(!entries.length||entries.length>1000)throw new Error('Import is empty or too large');
-    const seen=new Set<string>();let total=0;
-    for(const f of entries){
-      if(f.path.endsWith('/.gitkeep'))validateSharedDirectory(f.path.slice(0,-9));else validateSourcePath(f.path,true);
-      if(f.path.split('/').some(part=>/^(build|dist|out|cache|\.env.*)$/i.test(part))||/^(credentials|secrets)\./i.test(path.basename(f.path)))throw new Error('Build and secret files cannot be shared');
-      if(seen.has(f.path))throw new Error('Duplicate import path');seen.add(f.path);
-      const bytes=Buffer.from(f.content,f.encoding==='base64'?'base64':'utf8');total+=bytes.length;
-      if(bytes.length>(f.encoding==='base64'?10:5)*1024*1024||total>20*1024*1024||f.encoding==='base64'&&bytes.toString('base64')!==f.content||f.encoding!=='base64'&&f.content.includes('\0'))throw new Error('File is invalid or too large');
-    }
-  }
-  private async hydrate(checkout:GitCheckout,file:GitFileMetadata):Promise<SharedFile>{
-    const bytes=await checkout.readBlob(file.blobSha);return {...file,content:bytes.toString(file.encoding==='base64'?'base64':'utf8')};
-  }
+  create:CollaborationApi['create']=input=>this.request('/projects',{...input,requestId:input.requestId??randomUUID()});
   private async loadSnapshot(id:string):Promise<SharedProjectSnapshot>{
     const epoch=this.epoch;
-    const checkout=await this.checkout(id);
-    const pendingFile=path.join(await this.storageDirectory(),'pending',checkout.account.id,`${id}.json`);
-    try{
-      const pending=JSON.parse(await readFile(pendingFile,'utf8')) as {input:DoneInput;path:string};
-      const ticket=await this.request<PublishTicket|null>(`/projects/${id}/publications/${pending.input.requestId}`);
-      if(ticket?.status==='confirmed'){await unlink(pendingFile);}
-      else if(ticket?.status==='pushing'){
-        const head=await checkout.fetch();
-        if(head===ticket.commitSha){await this.request(`/projects/${id}/publications/${pending.input.requestId}/confirm`,{});await unlink(pendingFile);}
-      }
-    }catch(e){if((e as NodeJS.ErrnoException).code!=='ENOENT')throw e;}
-    let rows=await this.request<GitFileMetadata[]>(`/projects/${id}/files`);
-    let head=await checkout.fetch();
-    // Metadata and bytes must describe one published Git version before touching disk.
-    for(let attempt=0;!await checkout.matches(head,rows);attempt++){
-      if(attempt>=2)throw new Error('The project is being published. Retry synchronization in a moment.');
-      rows=await this.request<GitFileMetadata[]>(`/projects/${id}/files`);head=await checkout.fetch();
-    }
+    const account=(await this.accounts.state()).account;
+    if(!account)throw new Error('Please sign in');
+    const [files,directories]=await Promise.all([
+      this.request<SharedFile[]>(`/projects/${id}/files`),
+      this.request<string[]>(`/projects/${id}/directories`)
+    ]);
+    const rows=files;
     this.checkEpoch(epoch);
-    const files=await Promise.all(rows.filter(f=>!f.path.endsWith('/.gitkeep')).map(f=>this.hydrate(checkout,f)));
-    const directories=new Set<string>();
-    for(const row of rows){const parts=row.path.split('/');for(let i=1;i<parts.length;i++)directories.add(parts.slice(0,i).join('/'));}
-    const folder=await this.workingDirectory(id,checkout.account.id,epoch);
+    const folder=await this.workingDirectory(id,account.id,epoch);
     const protectedPaths=new Set<string>();
     for(const [fileId,edit] of this.edits){
       if(edit.file.projectId!==id)continue;
       const latest=rows.find(row=>row.id===fileId);
-      if(Date.parse(edit.expiresAt)>Date.now()&&latest?.version===edit.file.version&&latest.editor?.id===checkout.account.id)protectedPaths.add(edit.file.path);
+      if(Date.parse(edit.expiresAt)>Date.now()&&latest?.version===edit.file.version&&latest.editor?.id===account.id)protectedPaths.add(edit.file.path);
       else this.edits.delete(fileId);
     }
-    await folder.synchronize(files,[...directories],protectedPaths,()=>this.checkEpoch(epoch));
+    await folder.synchronize(files,directories,protectedPaths,()=>this.checkEpoch(epoch));
     for(const [fileId,file] of this.metadata)if(file.projectId===id)this.metadata.delete(fileId);
     for(const row of rows)this.metadata.set(row.id,row);
-    return {files,directories:[...directories].sort(),workspacePath:folder.root};
+    return {files,directories:directories.sort(),workspacePath:folder.root};
   }
   snapshot:CollaborationApi['snapshot']=id=>{
     const key=`${this.epoch}:${id}`;
@@ -258,54 +204,17 @@ export class CollaborationManager implements CollaborationApi {
     const folder=new SharedWorkingDirectory(canonical,path.join(this.dataDirectory,'working-folders',key+'.json'));
     this.folders.set(key,folder);return folder;
   }
-  private async publish(projectId:string,requestId:string,entries:ProjectFileInput[],leases:Record<string,string>):Promise<void>{
-    const epoch=this.epoch;
-    const request=<T>(route:string,body?:unknown):Promise<T>=>{this.checkEpoch(epoch);return this.request<T>(route,body);};
-    this.validateEntries(entries);
-    const fingerprint=createHash('sha256').update(JSON.stringify({entries,leases})).digest('hex');
-    const checkout=await this.checkout(projectId,requestId);await checkout.initialize();
-    const receipt=await checkout.receipt(requestId);if(receipt&&receipt.fingerprint!==fingerprint)throw new Error('Publication request ID was already used');
-    let ticket=await request<PublishTicket|null>(`/projects/${projectId}/publications/${requestId}`);
-    const changes:PublishChange[]=entries.map(f=>({path:f.path,blobSha:gitBlobSha(Buffer.from(f.content,f.encoding==='base64'?'base64':'utf8')),encoding:f.encoding??'utf8'}));
-    if(ticket&&JSON.stringify(ticket.changes)!==JSON.stringify(changes))throw new Error('Publication request ID was already used');
-    if(ticket?.status==='confirmed')return;
-    if(ticket?.status==='aborted')throw new Error('Publication turn expired. Request Edit again before publishing.');
-    let head=await checkout.fetch();
-    if(!ticket){
-      await checkout.saveReceipt(requestId,{fingerprint,commitSha:null});
-      for(let attempt=0;!ticket;attempt++){
-        try{ticket=await request<PublishTicket>(`/projects/${projectId}/publications`,{requestId,baseSha:head,changes,leases});}
-        catch(error){
-          if(attempt>=7||!(error instanceof Error)||!/^Another publication is in progress\.|^Remote has a newer version\. Synchronize and retry\.$/.test(error.message))throw error;
-          await new Promise(resolve=>setTimeout(resolve,Math.min(4000,1000*2**attempt)+Math.floor(Math.random()*250)));
-          this.checkEpoch(epoch);head=await checkout.fetch();
-        }
-      }
-    }
-    if(JSON.stringify(ticket.changes)!==JSON.stringify(changes))throw new Error('Publication request ID was already used');
-    if(ticket.commitSha){
-      // Confirmation first recovers a successful push whose HTTP response was lost.
-      try{await request(`/projects/${projectId}/publications/${requestId}/confirm`,{});return;}catch(e){if(head===ticket.commitSha)throw e;}
-      if(!await checkout.contains(ticket.commitSha))throw new Error('Publication commit is unavailable on this device. Recovery is required.');
-    }
-    if(head!==ticket.baseSha)throw new Error('Remote has a newer version. Your draft is preserved; synchronize before retrying.');
-    if(Date.parse(ticket.expiresAt)<=Date.now())throw new Error('Publication turn expired. Request Edit again before publishing.');
-    this.checkEpoch(epoch);
-    const sha=ticket.commitSha??await checkout.commit(ticket.baseSha,entries,requestId);
-    await checkout.saveReceipt(requestId,{fingerprint,commitSha:sha});
-    await request(`/projects/${projectId}/publications/${requestId}/commit`,{sha});
-    await checkout.push(sha);
-    await request(`/projects/${projectId}/publications/${requestId}/confirm`,{});
-    await checkout.fetch();
-  }
   private async add(projectId:string,entries:ProjectFileInput[],directories:string[]=[]):Promise<string[]>{
-    const files=this.withDirectories(entries,directories);
-    const account=(await this.accounts.state()).account;if(!account)throw new Error('Please sign in');
-    const requestId=this.stableId(`add:${account.id}:${projectId}:${JSON.stringify(files)}`);
-    await this.serial(projectId,()=>this.publish(projectId,requestId,files,{}));return [...entries.map(f=>f.path),...directories];
+    return this.request(`/projects/${projectId}/import`,{files:entries,directories});
   }
-  createFile:CollaborationApi['createFile']=async(id,filePath)=>{validateSourcePath(filePath);await this.add(id,[{path:filePath,content:''}]);return (await this.files(id)).find(f=>f.path===filePath)!;};
-  createDirectory:CollaborationApi['createDirectory']=async(id,directory)=>{await this.add(id,[],[validateSharedDirectory(directory)]);return directory;};
+  createFile:CollaborationApi['createFile']=async(id,filePath)=>{
+    validateSourcePath(filePath);
+    const file=await this.request<SharedFile>(`/projects/${id}/files`,{path:filePath});
+    this.metadata.set(file.id,file);return file;
+  };
+  createDirectory:CollaborationApi['createDirectory']=async(id,directory)=>{
+    await this.request(`/projects/${id}/directories`,{path:validateSharedDirectory(directory)});return directory;
+  };
   private async canAddFiles(projectId:string):Promise<void> {
     const project=(await this.projects()).find(p=>p.id===projectId);
     if(!project||project.role==='viewer')throw new Error('You do not have permission for this project');
@@ -360,11 +269,10 @@ export class CollaborationManager implements CollaborationApi {
     return this.serial(known.projectId,async()=>{
       this.checkEpoch(epoch);
       if(this.edits.has(id))throw new Error('This file already has an Edit session on this device.');
-      const snapshot=await this.loadSnapshot(known.projectId);
+      await this.loadSnapshot(known.projectId);
       const file=this.metadata.get(id);if(!file)throw new Error('This file is no longer in the project.');
-      const result=await this.request<{token:string;expiresAt:string;file:GitFileMetadata}>(`/files/${id}/edit`,{blobSha:file.blobSha,version:file.version});
-      const resultFile={...result.file,content:snapshot.files.find(row=>row.id===id)!.content};
-      const edit={...result,file:resultFile};this.edits.set(id,edit);return edit;
+      const edit=await this.request<EditLease>(`/files/${id}/edit`,{});
+      this.metadata.set(id,edit.file);this.edits.set(id,edit);return edit;
     });
   };
   renew:CollaborationApi['renew']=async(id,token)=>{
@@ -372,48 +280,36 @@ export class CollaborationManager implements CollaborationApi {
     catch(error){if(this.edits.get(id)?.token===token)this.edits.delete(id);throw error;}
   };
   done:CollaborationApi['done']=async input=>{
-    const file=this.metadata.get(input.fileId);if(!file)throw new Error('Synchronize the project before publishing');
-    const accountState=(await this.accounts.state()).account;
-    if(accountState){try{const prior=JSON.parse(await readFile(path.join(await this.storageDirectory(),'pending',accountState.id,`${file.projectId}.json`),'utf8')) as {input:DoneInput;path:string};
-      if(prior.path===file.path&&prior.input.content===input.content){const state=await this.request<PublishTicket|null>(`/projects/${file.projectId}/publications/${prior.input.requestId}`);if(state&&state.status!=='aborted')input=prior.input;}
-    }catch(e){if((e as NodeJS.ErrnoException).code!=='ENOENT')throw e;}}
-    // A confirmed receipt may have advanced the cached version after a lost response.
-    const ticket=await this.request<PublishTicket|null>(`/projects/${file.projectId}/publications/${input.requestId}`);
-    if(!ticket&&file.version!==input.baseVersion)throw new Error('The file has a newer version. Review your saved draft and request Edit again.');
-    const entries=[{path:file.path,content:input.content,encoding:'utf8' as const}];
-    if(!ticket&&gitBlobSha(Buffer.from(input.content))===file.blobSha){await this.release(file.id,input.token);return (await this.files(file.projectId)).find(f=>f.id===file.id)!;}
-    const account=(await this.accounts.state()).account;
-    if(!account)throw new Error('Please sign in');
-    // Save the full local intent before network operations so a restart can resume the same request.
+    const file=this.metadata.get(input.fileId);if(!file)throw new Error('Synchronize the project before saving');
+    const account=(await this.accounts.state()).account;if(!account)throw new Error('Please sign in');
     const pendingFile=path.join(await this.storageDirectory(),'pending',account.id,`${file.projectId}.json`);
+    try {
+      const previous=JSON.parse(await readFile(pendingFile,'utf8')) as {input:DoneInput;path:string};
+      if(previous.path===file.path&&previous.input.content===input.content)input=previous.input;
+    } catch(error) {if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}
     await this.saveJson(pendingFile,{input,path:file.path});
-    await this.serial(file.projectId,()=>this.publish(file.projectId,input.requestId,entries,{[file.id]:input.token}));
+    const result=await this.serial(file.projectId,()=>this.request<SharedFile>(`/files/${file.id}/done`,{token:input.token,baseVersion:input.baseVersion,content:input.content,requestId:input.requestId}));
     if(this.edits.get(file.id)?.token===input.token)this.edits.delete(file.id);
+    this.metadata.set(file.id,result);
     await unlink(pendingFile).catch(()=>undefined);
-    return (await this.files(file.projectId)).find(f=>f.id===file.id)!;
+    await this.snapshot(file.projectId);
+    return result;
   };
   release:CollaborationApi['release']=async(id,token)=>{
     if(this.edits.get(id)?.token===token)this.edits.delete(id);
     await this.request(`/files/${id}/release`,{token});
     const file=this.metadata.get(id);if(file)await this.snapshot(file.projectId);
   };
-  history:CollaborationApi['history']=async id=>{const file=this.metadata.get(id);if(!file)throw new Error('Synchronize the project first');const checkout=await this.checkout(file.projectId);const history=await checkout.history(file.path);return history.map((h,i)=>({...h,version:history.length-i}));};
-  invite:CollaborationApi['invite']=async(id,login,role)=>{await this.request(`/projects/${id}/invitations`,{login,role});};
+  history:CollaborationApi['history']=id=>this.request(`/files/${id}/history`);
+  invite:CollaborationApi['invite']=async(id,email,role)=>{await this.request(`/projects/${id}/invitations`,{email,role});};
   invitations:CollaborationApi['invitations']=()=>this.request('/invitations');
   accept:CollaborationApi['accept']=async id=>{await this.request(`/invitations/${id}/accept`,{});};
-  legacyConfirmation=async(email:string):Promise<void>=>{await this.request('/legacy/confirmation',{email});};
-  linkLegacy=async(email:string,code:string):Promise<void>=>{await this.request('/legacy/link',{email,code});};
-  legacyProjects=():Promise<SharedProject[]>=>this.request('/legacy/projects');
+  legacyConfirmation:CollaborationApi['legacyConfirmation']=()=>Promise.reject(new Error('Projects are stored directly in Supabase. Sign in with your email.'));
+  linkLegacy:CollaborationApi['linkLegacy']=()=>Promise.reject(new Error('Projects are stored directly in Supabase. Sign in with your email.'));
+  legacyProjects=():Promise<SharedProject[]>=>this.projects();
   migrateLegacy=async(projectId:string):Promise<{project:SharedProject;limitations:string}>=>{
-    const account=(await this.accounts.state()).account;if(!account)throw new Error('Please sign in');
-    const requestId=this.stableId(`migration:${account.id}:${projectId}`);
-    const filename=path.join(await this.storageDirectory(),'migrations',account.id,`${projectId}.json`);
-    type Export={project:SharedProject;files:ProjectFileInput[];directories:string[];limitations:string};
-    let exported:Export;
-    try{exported=JSON.parse(await readFile(filename,'utf8')) as Export;}catch(e){if((e as NodeJS.ErrnoException).code!=='ENOENT')throw e;exported=await this.request<Export>('/legacy/export',{projectId,requestId});await this.saveJson(filename,exported);}
-    await this.serial(exported.project.id,()=>this.publish(exported.project.id,requestId,this.withDirectories(exported.files,exported.directories),{}));
-    for(const link of await this.links())if(link.projectId===projectId)await this.projectLinks.bind(this.apiUrl!.replace(/\/$/,''),link.workspacePath,exported.project.id);
-    return {project:exported.project,limitations:exported.limitations};
+    const project=(await this.projects()).find(item=>item.id===projectId);
+    if(!project)throw new Error('Project unavailable');return {project,limitations:''};
   };
   private async draftPath(projectId:string,filePath:string):Promise<string> {
     const account=(await this.accounts.state()).account;
@@ -442,26 +338,70 @@ export class CollaborationManager implements CollaborationApi {
     return null;
   };
   clearDraft:CollaborationApi['clearDraft']=async(projectId,filePath)=>{await unlink(await this.draftPath(projectId,filePath)).catch(e=>{if((e as NodeJS.ErrnoException).code!=='ENOENT') throw e;});};
+  forwardSync:CollaborationApi['forwardSync']=async(projectId,pdfUrl,input)=>{
+    validateSourcePath(input.file);
+    if(!Number.isSafeInteger(input.line)||input.line<1||(input.column!==undefined&&(!Number.isSafeInteger(input.column)||input.column<1)))throw new Error('Invalid source position');
+    const epoch=this.epoch;
+    const preview=this.previewSyncTeX.get(pdfUrl);
+    const unavailable={available:false,reason:'SyncTeX is unavailable for this PDF. Compile the project again.'};
+    if(!preview||preview.projectId!==projectId||preview.epoch!==epoch||!this.artifacts.resolve(pdfUrl))return unavailable;
+    const account=(await this.accounts.state()).account;
+    if(epoch!==this.epoch||!account||account.id!==preview.accountId||!preview.data)return unavailable;
+    // Select only the exact snapshot path; basename fallback can confuse two chapters
+    // named main.tex, or match a file that was never typeset in this preview.
+    const files=new Map([...preview.data.files].filter(([,file])=>file===input.file));
+    const result=forwardSearch({...preview.data,files},input.file,input.line,input.column);
+    return {available:result.available,...(result.reason?{reason:result.reason}:{}),...(result.page!==undefined?{page:result.page}:{}),...(result.x!==undefined?{x:result.x}:{}),...(result.y!==undefined?{y:result.y}:{})};
+  };
+  private async readPreviewSyncTeX(filename:string|undefined,root:string,sourcePaths:Set<string>):Promise<SyncTeXData|null>{
+    if(!filename)return null;
+    try{
+      const bytes=await readFile(filename);
+      const data=parseSyncTeX((filename.endsWith('.gz')?gunzipSync(bytes,{maxOutputLength:64*1024*1024}):bytes).toString('utf8'));
+      const files=new Map<number,string>();
+      const workspaceRoot=root.replace(/\\/g,'/')+'/';
+      for(const [tag,input] of data.files){
+        let relative=input.replace(/\\/g,'/');
+        if(relative.startsWith('/workspace/'))relative=relative.slice('/workspace/'.length);
+        else if(relative.startsWith(workspaceRoot))relative=relative.slice(workspaceRoot.length);
+        relative=path.posix.normalize(relative);
+        if(sourcePaths.has(relative))files.set(tag,relative);
+      }
+      return files.size&&data.records.length?{...data,files}:null;
+    }catch{return null;}
+  }
   compile=async(projectId:string,files:ProjectFileInput[],rootDocument:string,engine:LatexEngine):Promise<CompileResult>=>{
     if(this.building) throw new Error('A compilation is already running');
     validateSourcePath(rootDocument);
     if(!files.some(f=>f.path===rootDocument) || !rootDocument.toLowerCase().endsWith('.tex') || files.length>1000 || files.reduce((n,f)=>n+Buffer.byteLength(f.content,f.encoding==='base64'?'base64':'utf8'),0)>20*1024*1024) throw new Error('Invalid project snapshot');
     for(const f of files) { validateSourcePath(f.path,f.encoding==='base64'); if(f.encoding==='base64'&&Buffer.from(f.content,'base64').toString('base64')!==f.content)throw new Error('Invalid attachment'); }
     this.building=true;
+    const epoch=this.epoch;
     let root:string|undefined;
     try {
+      const accountId=(await this.accounts.state()).account?.id;
+      this.checkEpoch(epoch);
       await mkdir(path.join(this.dataDirectory,'builds'),{recursive:true});
       root=await mkdtemp(path.join(this.dataDirectory,'builds',`${projectId}-`));
       const output=path.join(root,'.easy-latex','build');
       await mkdir(output,{recursive:true});
       for(const f of files) { const target=path.join(root,f.path);await mkdir(path.dirname(target),{recursive:true});await writeFile(target,f.encoding==='base64'?Buffer.from(f.content,'base64'):f.content); }
       const result=await this.compiler.compile({workspacePath:root,outputDirectory:output,rootDocument,engine,onOutput:()=>undefined});
+      this.checkEpoch(epoch);
       // Keep preview snapshots in a stable directory, then remove the temporary source tree.
       let pdfUrl:string|undefined;
       if(result.success && result.pdfPath) {
         const previews=path.join(this.dataDirectory,'previews');await mkdir(previews,{recursive:true});
         const {copyFile}=await import('node:fs/promises'); const pdf=path.join(previews,`${randomUUID()}.pdf`);
         await copyFile(result.pdfPath,pdf);pdfUrl=await this.artifacts.registerPdf(pdf,previews);await unlink(pdf);
+        const data=await this.readPreviewSyncTeX(result.synctexPath,root,new Set(files.map(file=>file.path)));
+        const currentAccountId=(await this.accounts.state()).account?.id;
+        this.checkEpoch(epoch);
+        if(currentAccountId!==accountId)throw new Error('Account or server changed. Reopen the project.');
+        if(accountId){
+          this.previewSyncTeX.set(pdfUrl,{projectId,accountId,epoch,data});
+          while(this.previewSyncTeX.size>8){const oldest=this.previewSyncTeX.keys().next().value;if(oldest)this.previewSyncTeX.delete(oldest);}
+        }
       }
       return {success:result.success,cancelled:result.cancelled,errors:result.errors,warnings:result.warnings,duration:result.duration,log:result.log,engine,rootDocument,...(pdfUrl?{pdfUrl}:{})};
     } finally { this.building=false;if(root)await rm(root,{recursive:true,force:true}); }

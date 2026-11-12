@@ -7,15 +7,16 @@ export function AccountDialog({state, onChanged, onClose}: {state: AccountState;
   const dialog = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const previous = document.activeElement;
-    dialog.current?.querySelector<HTMLButtonElement>("button")?.focus();
+    const initial = dialog.current?.querySelector<HTMLInputElement>('input[type="email"], input[type="password"], input[type="url"]') ?? dialog.current?.querySelector<HTMLButtonElement>('button');
+    initial?.focus();
     return () => {if (previous instanceof HTMLElement) previous.focus();};
   }, []);
   return <div className="dashboard-dialog-backdrop account-dialog-backdrop" onMouseDown={event => {if (event.target === event.currentTarget) onClose();}}>
     <div ref={dialog} className="account-dialog" role="dialog" aria-modal="true" aria-label="Sign in to collaborate" onKeyDown={event => {
       if (event.key === "Escape") {event.stopPropagation(); onClose();}
       if (event.key !== "Tab") return;
-      const controls = [...(dialog.current?.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), summary, a[href]') ?? [])]
-        .filter(element => !element.closest('details:not([open])') || element.tagName === 'SUMMARY');
+      const controls = [...(dialog.current?.querySelectorAll<HTMLElement>('button, input, summary, a[href]') ?? [])]
+        .filter(element => !element.matches(':disabled') && (!element.closest('details:not([open])') || element.tagName === 'SUMMARY'));
       const first = controls[0]; const last = controls.at(-1);
       if (event.shiftKey && document.activeElement === first) {event.preventDefault(); last?.focus();}
       else if (!event.shiftKey && document.activeElement === last) {event.preventDefault(); first?.focus();}

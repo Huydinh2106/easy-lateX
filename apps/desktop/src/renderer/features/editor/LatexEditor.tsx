@@ -23,11 +23,12 @@ interface LatexEditorProps {
   onChange(value: string): void;
   onSave(): void;
   onCursorLineChange?(line: number): void;
+  onSyncToPdf?(line?: number): void;
   readOnly?: boolean;
 }
 
 export const LatexEditor = forwardRef<LatexEditorHandle, LatexEditorProps>(function LatexEditor(
-  { value, path, diagnostics, onChange, onSave, onCursorLineChange, readOnly = false },
+  { value, path, diagnostics, onChange, onSave, onCursorLineChange, onSyncToPdf, readOnly = false },
   forwardedRef
 ) {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -36,9 +37,11 @@ export const LatexEditor = forwardRef<LatexEditorHandle, LatexEditorProps>(funct
   const onChangeRef = useRef(onChange);
   const onSaveRef = useRef(onSave);
   const onCursorLineChangeRef = useRef(onCursorLineChange);
+  const onSyncToPdfRef = useRef(onSyncToPdf);
   onChangeRef.current = onChange;
   onSaveRef.current = onSave;
   onCursorLineChangeRef.current = onCursorLineChange;
+  onSyncToPdfRef.current = onSyncToPdf;
 
   useImperativeHandle(forwardedRef, () => ({
     jumpTo(line, column = 1) {
@@ -63,11 +66,44 @@ export const LatexEditor = forwardRef<LatexEditorHandle, LatexEditorProps>(funct
         latexLanguage,
         autocompletion({ override: [completeLatex] }),
         easyLatexEditorTheme,
-        keymap.of([{
-          key: "Mod-s",
-          preventDefault: true,
-          run: () => { onSaveRef.current(); return true; }
-        }]),
+        keymap.of([
+          {
+            key: "Mod-s",
+            preventDefault: true,
+            run: () => { onSaveRef.current(); return true; }
+          },
+          {
+            key: "Mod-Alt-j",
+            preventDefault: true,
+            run: (view) => {
+              const line = view.state.doc.lineAt(view.state.selection.main.head).number;
+              onSyncToPdfRef.current?.(line);
+              return true;
+            }
+          }
+        ]),
+        EditorView.domEventObservers({
+          mousedown: (event, view) => {
+            if (event.button !== 0 || event.detail !== 2) return;
+            const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
+            if (pos !== null) {
+              onSyncToPdfRef.current?.(view.state.doc.lineAt(pos).number);
+            }
+          }
+        }),
+        EditorView.domEventHandlers({
+          click: (event, view) => {
+            if (event.altKey) {
+              const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
+              if (pos !== null) {
+                const line = view.state.doc.lineAt(pos).number;
+                onSyncToPdfRef.current?.(line);
+                return true;
+              }
+            }
+            return false;
+          }
+        }),
         EditorView.updateListener.of((update) => {
           if (update.docChanged && !update.transactions.some((transaction) => transaction.annotation(externalUpdate))) {
             onChangeRef.current(update.state.doc.toString());

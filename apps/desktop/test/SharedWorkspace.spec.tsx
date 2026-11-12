@@ -2,26 +2,81 @@
 import '@testing-library/jest-dom/vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Account, CollaborationApi, SharedFile } from '@easy-latex/shared-types';
-vi.mock('../src/renderer/features/editor/LatexEditor',()=>({LatexEditor:({value,readOnly,onChange}:{value:string;readOnly:boolean;onChange(v:string):void})=><textarea aria-label="Source" readOnly={readOnly} value={value} onChange={e=>onChange(e.target.value)}/>}));
-vi.mock('../src/renderer/features/pdf/PdfViewer',()=>({PdfViewer:()=>null}));
+import type { Account, CollaborationApi, CompileResult, SharedFile } from '@easy-latex/shared-types';
+vi.mock('../src/renderer/features/editor/LatexEditor',()=>({LatexEditor:({value,readOnly,onChange,onSyncToPdf}:{value:string;readOnly:boolean;onChange(v:string):void;onSyncToPdf?(line:number):void})=><textarea aria-label="Source" readOnly={readOnly} value={value} onChange={e=>onChange(e.target.value)} onDoubleClick={()=>onSyncToPdf?.(5)}/>}));
+vi.mock('../src/renderer/features/pdf/PdfViewer',()=>({PdfViewer:({url,jumpTarget}:{url?:string;jumpTarget?:{page:number;x:number;y:number;nonce:number}|null})=><div aria-label="PDF preview" data-url={url}>{jumpTarget?<output aria-label="PDF position">{jumpTarget.page}:{jumpTarget.x}:{jumpTarget.y}</output>:null}</div>}));
 vi.mock('../src/renderer/features/project/FileOutline',()=>({FileOutline:()=>null}));
 import { SharedWorkspace } from '../src/renderer/features/collaboration/SharedWorkspace';
 const account:Account={id:'owner',email:'owner@example.test',displayName:'Owner'};
 const file:SharedFile={id:'file',projectId:'project',path:'main.tex',content:'Published source',version:1,encoding:'utf8',updatedAt:'2026-10-04T00:00:00Z',editor:null};
-const api={snapshot:vi.fn(),onProjectUpdate:vi.fn<CollaborationApi['onProjectUpdate']>(),files:vi.fn(),directories:vi.fn(),createDirectory:vi.fn(),importFiles:vi.fn(),importFolder:vi.fn(),importDropped:vi.fn(),draft:vi.fn(),saveDraft:vi.fn(),clearDraft:vi.fn(),acquire:vi.fn(),renew:vi.fn(),release:vi.fn(),done:vi.fn(),history:vi.fn(),createFile:vi.fn(),invite:vi.fn()};
-beforeEach(()=>{vi.resetAllMocks();api.snapshot.mockImplementation(async()=>({files:await api.files() as SharedFile[],directories:await api.directories() as string[],workspacePath:'/projects/Paper'}));api.onProjectUpdate.mockReturnValue(vi.fn());api.files.mockResolvedValue([file]);api.directories.mockResolvedValue([]);api.draft.mockResolvedValue(null);api.saveDraft.mockResolvedValue(undefined);api.clearDraft.mockResolvedValue(undefined);api.release.mockResolvedValue(undefined);api.acquire.mockResolvedValue({token:'lease',expiresAt:new Date(Date.now()+90_000).toISOString(),file:{...file,editor:{id:account.id,displayName:'Owner',expiresAt:new Date(Date.now()+90_000).toISOString()}}});api.done.mockResolvedValue({...file,content:'Changed source',version:2});Object.defineProperty(window,'desktop',{value:{collaboration:api,file:{pathForDroppedFile:()=>'/tmp/plot.png'}},configurable:true});});
+const preview:CompileResult={success:true,cancelled:false,errors:[],warnings:[],duration:1,log:'',engine:'pdflatex',rootDocument:'main.tex',pdfUrl:'easy-latex://pdf/11111111-1111-4111-8111-111111111111'};
+const api={snapshot:vi.fn(),onProjectUpdate:vi.fn<CollaborationApi['onProjectUpdate']>(),files:vi.fn(),directories:vi.fn(),createDirectory:vi.fn(),importFiles:vi.fn(),importFolder:vi.fn(),importDropped:vi.fn(),draft:vi.fn(),saveDraft:vi.fn(),clearDraft:vi.fn(),acquire:vi.fn(),renew:vi.fn(),release:vi.fn(),done:vi.fn(),history:vi.fn(),createFile:vi.fn(),invite:vi.fn(),compile:vi.fn<CollaborationApi['compile']>(),cancelCompile:vi.fn<CollaborationApi['cancelCompile']>(),forwardSync:vi.fn<CollaborationApi['forwardSync']>()};
+beforeEach(()=>{vi.resetAllMocks();api.compile.mockResolvedValue(preview);api.cancelCompile.mockResolvedValue(false);api.forwardSync.mockResolvedValue({available:true,page:2,x:100,y:190});api.snapshot.mockImplementation(async()=>({files:await api.files() as SharedFile[],directories:await api.directories() as string[],workspacePath:'/projects/Paper'}));api.onProjectUpdate.mockReturnValue(vi.fn());api.files.mockResolvedValue([file]);api.directories.mockResolvedValue([]);api.draft.mockResolvedValue(null);api.saveDraft.mockResolvedValue(undefined);api.clearDraft.mockResolvedValue(undefined);api.release.mockResolvedValue(undefined);api.acquire.mockResolvedValue({token:'lease',expiresAt:new Date(Date.now()+90_000).toISOString(),file:{...file,editor:{id:account.id,displayName:'Owner',expiresAt:new Date(Date.now()+90_000).toISOString()}}});api.done.mockResolvedValue({...file,content:'Changed source',version:2});Object.defineProperty(window,'desktop',{value:{collaboration:api,file:{pathForDroppedFile:()=>'/tmp/plot.png'}},configurable:true});});
 afterEach(()=>{cleanup();vi.useRealTimers();});
 const open=async(role:'owner'|'editor'|'viewer'='owner')=>{render(<SharedWorkspace project={{id:'project',name:'Shared paper',role}} account={account} onClose={()=>undefined}/>);await waitFor(()=>expect(screen.getByLabelText('Source')).toHaveValue('Published source'));};
+describe('Cloud source to PDF navigation',()=>{
+  const compile=async()=>{
+    fireEvent.click(screen.getByRole('button',{name:'Compile'}));
+    await screen.findByText('Compilation complete');
+  };
+  it('explains when the source has no compiled PDF yet',async()=>{
+    await open();fireEvent.doubleClick(screen.getByLabelText('Source'));
+    await screen.findByText('Compile the project before jumping to the PDF.');
+    expect(api.forwardSync).not.toHaveBeenCalled();
+  });
+  it('navigates a read-only source using the cloud project and displayed PDF',async()=>{
+    await open('viewer');await compile();
+    fireEvent.click(screen.getByRole('button',{name:'PDF'}));
+    expect(screen.queryByLabelText('PDF preview')).not.toBeInTheDocument();
+    fireEvent.doubleClick(screen.getByLabelText('Source'));
+    await screen.findByLabelText('PDF position');
+    expect(api.forwardSync).toHaveBeenCalledExactlyOnceWith('project',preview.pdfUrl,{file:'main.tex',line:5});
+    expect(screen.getByLabelText('PDF position')).toHaveTextContent('2:100:190');
+    expect(screen.getByLabelText('PDF preview')).toHaveAttribute('data-url',preview.pdfUrl);
+  });
+  it('keeps navigation paired with the last PDF after a failed compile',async()=>{
+    await open();await compile();
+    const failed:CompileResult={success:false,cancelled:false,errors:[{severity:'error',message:'Broken source'}],warnings:[],duration:1,log:'',engine:'pdflatex',rootDocument:'main.tex'};
+    api.compile.mockResolvedValueOnce(failed);
+    fireEvent.click(screen.getByRole('button',{name:'Compile'}));
+    await screen.findByText('Broken source');
+    fireEvent.click(screen.getByRole('button',{name:'Jump to PDF'}));
+    await screen.findByLabelText('PDF position');
+    expect(api.forwardSync).toHaveBeenCalledExactlyOnceWith('project',preview.pdfUrl,{file:'main.tex',line:1});
+    expect(screen.getByLabelText('PDF preview')).toHaveAttribute('data-url',preview.pdfUrl);
+  });
+  it('shows unavailable SyncTeX without a stale jump target',async()=>{
+    api.forwardSync.mockResolvedValue({available:false,reason:'This PDF has no source mapping.'});
+    await open();await compile();fireEvent.doubleClick(screen.getByLabelText('Source'));
+    await screen.findByText('This PDF has no source mapping.');
+    expect(screen.queryByLabelText('PDF position')).not.toBeInTheDocument();
+  });
+  it('ignores an old navigation response when a newer PDF is displayed',async()=>{
+    let finish!: (result:Awaited<ReturnType<CollaborationApi['forwardSync']>>)=>void;
+    api.forwardSync.mockImplementationOnce(()=>new Promise(resolve=>{finish=resolve;}));
+    await open();await compile();fireEvent.doubleClick(screen.getByLabelText('Source'));
+    await waitFor(()=>expect(api.forwardSync).toHaveBeenCalledTimes(1));
+    const nextUrl='easy-latex://pdf/33333333-3333-4333-8333-333333333333';
+    api.compile.mockResolvedValueOnce({...preview,pdfUrl:nextUrl});
+    fireEvent.click(screen.getByRole('button',{name:'Compile'}));
+    await waitFor(()=>expect(screen.getByLabelText('PDF preview')).toHaveAttribute('data-url',nextUrl));
+    await act(()=>{finish({available:true,page:9,x:10,y:10});return Promise.resolve();});
+    expect(screen.queryByLabelText('PDF position')).not.toBeInTheDocument();
+    fireEvent.doubleClick(screen.getByLabelText('Source'));
+    await screen.findByLabelText('PDF position');
+    expect(api.forwardSync).toHaveBeenLastCalledWith('project',nextUrl,{file:'main.tex',line:5});
+    expect(screen.getByLabelText('PDF position')).toHaveTextContent('2:100:190');
+  });
+});
 describe('Shared file access in the editor',()=>{
   it('uses one snapshot and displays the actual working folder',async()=>{
     await open();expect(api.snapshot).toHaveBeenCalledWith('project');
     expect(screen.getByText('/projects/Paper')).toBeInTheDocument();
   });
   it('blocks Edit after a synchronization error until a successful refresh',async()=>{
-    api.snapshot.mockRejectedValueOnce(new Error('GitHub unavailable'));
+    api.snapshot.mockRejectedValueOnce(new Error('Supabase unavailable'));
     render(<SharedWorkspace project={{id:'project',name:'Paper',role:'owner'}} account={account} onClose={()=>undefined}/>);
-    await screen.findByText('GitHub unavailable');expect(screen.getByRole('switch',{name:'Edit mode'})).toBeDisabled();
+    await screen.findByText('Supabase unavailable');expect(screen.getByRole('switch',{name:'Edit mode'})).toBeDisabled();
     fireEvent.click(screen.getByRole('button',{name:'Retry synchronization'}));
     await waitFor(()=>expect(screen.getByRole('switch',{name:'Edit mode'})).toBeEnabled());
   });
@@ -33,6 +88,18 @@ describe('Shared file access in the editor',()=>{
     fireEvent.click(screen.getByRole('button',{name:'Done'}));
     await screen.findByText('Save failed');expect(api.done).not.toHaveBeenCalled();
     expect(screen.getByLabelText('Source')).toHaveValue('Do not lose this');
+  });
+  it('keeps Visual mode read-only until Edit is acquired and publishes the shared visual buffer', async () => {
+    await open();
+    fireEvent.click(screen.getByRole('switch', {name: 'Visual mode'}));
+    expect(screen.getByRole('textbox', {name: 'Paragraph 1'})).toHaveAttribute('contenteditable', 'false');
+    fireEvent.click(screen.getByRole('switch', {name: 'Edit mode'}));
+    await waitFor(() => expect(screen.getByRole('textbox', {name: 'Paragraph 1'})).toHaveAttribute('contenteditable', 'true'));
+    const paragraph = screen.getByRole('textbox', {name: 'Paragraph 1'});
+    fireEvent.focus(paragraph); paragraph.textContent = 'Visual draft with 100%'; fireEvent.input(paragraph);
+    fireEvent.click(screen.getByRole('button', {name: 'Done'}));
+    await waitFor(() => expect(api.done).toHaveBeenCalledWith(expect.objectContaining({content: 'Visual draft with 100\\%'})));
+    await waitFor(() => expect(screen.getByRole('switch', {name: 'Edit mode'})).not.toBeChecked());
   });
   it('continues renewing Edit while the window is hidden',async()=>{
     vi.useFakeTimers({toFake:['setInterval','clearInterval']});api.renew.mockResolvedValue({expiresAt:new Date(Date.now()+120_000).toISOString()});
@@ -95,19 +162,32 @@ describe('Shared file access in the editor',()=>{
     api.invite.mockResolvedValue(undefined);
     render(<SharedWorkspace project={{id:'project',name:'Paper',role:'owner'}} account={account} onClose={()=>undefined} initialInvitationsOpen/>);
     await screen.findByRole('dialog',{name:'Invite people'});expect(api.invite).not.toHaveBeenCalled();
-    fireEvent.change(screen.getByLabelText('GitHub username'),{target:{value:'editor-github'}});
+    fireEvent.change(screen.getByLabelText('Email address'),{target:{value:'editor@example.com'}});
     fireEvent.click(screen.getByRole('button',{name:'Add invitation'}));
-    await waitFor(()=>expect(api.invite).toHaveBeenCalledWith('project','editor-github','editor'));
+    await waitFor(()=>expect(api.invite).toHaveBeenCalledWith('project','editor@example.com','editor'));
+  });
+  it('preserves view-only permissions when the owner invites by email',async()=>{
+    api.invite.mockResolvedValue(undefined);
+    render(<SharedWorkspace project={{id:'project',name:'Paper',role:'owner'}} account={account} onClose={()=>undefined} initialInvitationsOpen/>);
+    fireEvent.change(await screen.findByLabelText('Email address'),{target:{value:'reader@example.com'}});
+    fireEvent.change(screen.getByLabelText('Permission'),{target:{value:'viewer'}});
+    fireEvent.click(screen.getByRole('button',{name:'Add invitation'}));
+    await waitFor(()=>expect(api.invite).toHaveBeenCalledWith('project','reader@example.com','viewer'));
   });
   it('starts in View, enables typing only after acquiring Edit, and publishes Done',async()=>{
     await open();expect(screen.getByLabelText('Source')).toHaveAttribute('readonly');
     expect(screen.getByRole('switch',{name:'Edit mode'})).not.toBeChecked();
     fireEvent.click(screen.getByRole('switch',{name:'Edit mode'}));await waitFor(()=>expect(screen.getByLabelText('Source')).not.toHaveAttribute('readonly'));
     expect(screen.getByRole('switch',{name:'Edit mode'})).toBeChecked();
-    fireEvent.change(screen.getByLabelText('Source'),{target:{value:'Changed source'}});fireEvent.click(screen.getByRole('button',{name:'Done'}));
+    fireEvent.change(screen.getByLabelText('Source'),{target:{value:'Changed source'}});
+    await screen.findByText('Saved locally · Click Done to save to cloud');
+    expect(api.done).not.toHaveBeenCalled();
+    expect(screen.getByTitle('Signed in as owner@example.test')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button',{name:'Done'}));
     await waitFor(()=>expect(api.done).toHaveBeenCalledWith(expect.objectContaining({token:'lease',baseVersion:1,content:'Changed source'})));
     await waitFor(()=>expect(screen.getByLabelText('Source')).toHaveAttribute('readonly'));expect(api.clearDraft).toHaveBeenCalledWith('project','main.tex');
     expect(screen.getByRole('switch',{name:'Edit mode'})).not.toBeChecked();
+    expect(screen.getByText('Saved to Supabase. Your changes are available to collaborators.')).toBeInTheDocument();
   });
   it('switches back to View by keeping the draft and releasing access without publishing',async()=>{
     await open();fireEvent.click(screen.getByRole('switch',{name:'Edit mode'}));

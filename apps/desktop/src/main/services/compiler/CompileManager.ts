@@ -3,6 +3,7 @@ import type { ArtifactRegistry } from "./ArtifactRegistry";
 import type { CompilerBackend } from "./CompilerBackend";
 import type { FileManager } from "../filesystem/FileManager";
 import type { SettingsManager } from "../settings/SettingsManager";
+import type { SyncTeXManager } from "../synctex/SyncTeXManager";
 import type { WorkspaceManager } from "../workspace/WorkspaceManager";
 
 type Listener = (event: CompileEvent) => void;
@@ -16,7 +17,8 @@ export class CompileManager {
     private readonly workspace: WorkspaceManager,
     private readonly files: FileManager,
     private readonly settings: SettingsManager,
-    private readonly artifacts: ArtifactRegistry
+    private readonly artifacts: ArtifactRegistry,
+    private readonly synctex?: SyncTeXManager
   ) {}
 
   build(options: CompileOptions = {}): Promise<CompileResult> {
@@ -59,6 +61,11 @@ export class CompileManager {
       onOutput: () => this.emit({ phase: "running", message: "Compiling", elapsed: Math.round(performance.now() - started) })
     });
     const pdfUrl = output.success && output.pdfPath ? await this.artifacts.registerPdf(output.pdfPath, outputDirectory) : undefined;
+    if (pdfUrl && output.synctexPath) {
+      // The working SyncTeX file is overwritten or removed by the next build.
+      // Freeze it beside the successful PDF identity before allowing another build.
+      await this.synctex?.registerArtifact(pdfUrl, output.synctexPath, current.project.workspacePath).catch(() => undefined);
+    }
     const result: CompileResult = {
       success: output.success,
       cancelled: output.cancelled,

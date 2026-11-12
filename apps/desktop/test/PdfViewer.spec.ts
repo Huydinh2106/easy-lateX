@@ -35,7 +35,17 @@ beforeEach(() => {
   renders = [];
   destroy = vi.fn().mockResolvedValue(undefined);
   getPage = vi.fn((number: number) => Promise.resolve({
-    getViewport: ({ scale }: { scale: number }) => ({ width: 600 * scale, height: 800 * scale, scale }),
+    getViewport: ({ scale }: { scale: number }) => ({
+      width: 600 * scale,
+      height: 800 * scale,
+      scale,
+      convertToViewportRectangle: (rect: number[]) => [(rect[0] ?? 0) * scale, (rect[1] ?? 0) * scale, (rect[2] ?? 0) * scale, (rect[3] ?? 0) * scale]
+    }),
+    getTextContent: () => Promise.resolve({
+      items: [
+        { str: "Test paragraph", transform: [12, 0, 0, 12, 100, 150], width: 200, height: 14 }
+      ]
+    }),
     render: ({ viewport }: { viewport: { scale: number } }) => {
       const cancel = vi.fn();
       renders.push({ number, cancel, scale: viewport.scale });
@@ -163,5 +173,102 @@ describe("continuous PDF preview", () => {
     render(React.createElement(PdfViewer, { url: "artifact:broken", stale: false, onClose: vi.fn() }));
     expect(await screen.findByText("Invalid PDF")).toBeTruthy();
     expect(screen.queryByRole("img")).toBeNull();
+  });
+
+  it("triggers inverse SyncTeX on double click or Cmd-click", async () => {
+    const onInverseSync = vi.fn<(input: { page: number; x: number; y: number }) => void>();
+    render(React.createElement(PdfViewer, { url: "artifact:first", stale: false, onClose: vi.fn(), onInverseSync }));
+    const page2 = await screen.findByRole("img", { name: "Page 2" });
+    vi.spyOn(page2, "getBoundingClientRect").mockReturnValue({
+      left: 10,
+      top: 20,
+      width: 600,
+      height: 800
+    } as DOMRect);
+
+    // Double click at (110, 220) relative to viewport -> (100, 200) on page
+    fireEvent.doubleClick(page2, { clientX: 110, clientY: 220 });
+    expect(onInverseSync).toHaveBeenCalledTimes(1);
+    const firstCall = onInverseSync.mock.calls[0]?.[0];
+    expect(firstCall?.page).toBe(2);
+    expect(firstCall?.x).toBeCloseTo(133.93, 1);
+    expect(firstCall?.y).toBeCloseTo(267.86, 1);
+
+    // Cmd-click
+    fireEvent.click(page2, { metaKey: true, clientX: 110, clientY: 220 });
+    expect(onInverseSync).toHaveBeenCalledTimes(2);
+  });
+
+  it("handles jumpTarget by rendering highlight marker", async () => {
+    const view = render(React.createElement(PdfViewer, {
+      url: "artifact:first",
+      stale: false,
+      onClose: vi.fn(),
+      jumpTarget: { page: 1, x: 150, y: 250, nonce: 12345 }
+    }));
+    await screen.findByRole("img", { name: "Page 1" });
+    await waitFor(() => expect(view.container.querySelector(".pdf-synctex-highlight")).not.toBeNull());
+    const lineHighlight = view.container.querySelector(".pdf-synctex-line-highlight");
+    expect(lineHighlight).not.toBeNull();
+  });
+
+  it("centers a source target inside the PDF scroll viewport, including horizontal zoom overflow", async () => {
+    const onClose = vi.fn();
+    const view = render(React.createElement(PdfViewer, {url: "artifact:first", stale: false, onClose}));
+    const frame = await screen.findByRole("img", {name: "Page 3"});
+    const viewport = screen.getByRole("region", {name: /PDF pages/});
+    await flushUI(() => resize([{contentRect: {width: 632}} as ResizeObserverEntry], {} as ResizeObserver));
+    Object.defineProperties(viewport, {clientHeight: {value: 500}, clientWidth: {value: 400}});
+    viewport.scrollTop = 300; viewport.scrollLeft = 50;
+    vi.spyOn(viewport, 'getBoundingClientRect').mockReturnValue({top: 100, left: 100} as DOMRect);
+    vi.spyOn(frame, 'getBoundingClientRect').mockReturnValue({top: 700, left: 80} as DOMRect);
+    const scrollTo = vi.fn(); viewport.scrollTo = scrollTo;
+    view.rerender(React.createElement(PdfViewer, {url: "artifact:first", stale: false, onClose,
+      jumpTarget: {page: 3, x: 550, y: 250, nonce: 1}}));
+    expect(scrollTo).toHaveBeenCalledWith({top: 900, left: 380, behavior: "smooth"});
+    expect(screen.getByRole<HTMLInputElement>('textbox', {name: 'Go to page'}).value).toBe('3');
+  });
+
+  it("clears the old source highlight when another PDF replaces the preview", async () => {
+    const onClose = vi.fn();
+    const view = render(React.createElement(PdfViewer, {url: "artifact:first", stale: false, onClose,
+      jumpTarget: {page: 1, x: 150, y: 250, nonce: 1}}));
+    await screen.findByRole("img", {name: "Page 1"});
+    await waitFor(() => expect(view.container.querySelector('.pdf-synctex-highlight')).not.toBeNull());
+    view.rerender(React.createElement(PdfViewer, {url: "artifact:second", stale: false, onClose, jumpTarget: null}));
+    await screen.findByRole("img", {name: "Page 1"});
+    expect(view.container.querySelector('.pdf-synctex-highlight')).toBeNull();
+  });
+
+  it("renders light yellow hover highlight when mouse hovers over jumpable text region and removes on mouse leave", async () => {
+    const view = render(React.createElement(PdfViewer, {
+      url: "artifact:first",
+      stale: false,
+      onClose: vi.fn()
+    }));
+    await screen.findByRole("img", { name: "Page 1" });
+    await flushUI(() => intersect(1));
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const page1 = screen.getByRole("img", { name: "Page 1" });
+
+    // Moving over blank margin (e.g. x: 10, y: 10) -> no hover highlight
+    fireEvent.mouseMove(page1, { clientX: 10, clientY: 10 });
+    expect(view.container.querySelector(".pdf-hover-highlight")).toBeNull();
+
+    // Moving over text region (mapped to unscaled 154, 154) -> light yellow hover highlight on that region
+    await waitFor(() => {
+      fireEvent.mouseMove(page1, { clientX: 115, clientY: 115 });
+      const hover = view.container.querySelector(".pdf-hover-highlight");
+      expect(hover).not.toBeNull();
+    });
+    expect(page1.classList.contains("is-hovering-jumpable")).toBe(true);
+
+    // Leaving page -> highlight removed
+    fireEvent.mouseLeave(page1);
+    expect(view.container.querySelector(".pdf-hover-highlight")).toBeNull();
+    expect(page1.classList.contains("is-hovering-jumpable")).toBe(false);
   });
 });

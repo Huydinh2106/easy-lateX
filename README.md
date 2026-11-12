@@ -7,9 +7,10 @@ filesystem and process access. LaTeX compilation runs inside a locked-down
 Docker container; no TeX distribution is installed on the host.
 
 Local projects do not require a web server, database, or cloud account. A normal
-local folder remains their source of truth. Optional shared projects use GitHub repositories and a coordination API.
-Published source and history are read from Git on the desktop; PostgreSQL stores
-identity, membership, file metadata, leases and publication receipts.
+local folder remains their source of truth. Cloud projects use email/password
+accounts in Supabase Auth and an API hosted on Supabase Edge Functions.
+Supabase PostgreSQL stores complete source and revision history, membership and
+edit leases; a private Supabase Storage bucket stores binary resources.
 
 ## Requirements
 
@@ -47,9 +48,9 @@ PDF previews use a snapshot so a later failed build cannot overwrite them.
 
 ## Local projects and files
 
-`New project` creates a named folder containing `main.tex` and `.gitignore`.
-New projects are stored in `Documents/Easy LaTeX` by default; the location is
-shown in the creation dialog and can be changed with the native folder picker.
+`New project` creates a cloud project containing `main.tex` after email sign-in.
+Opening it creates a local working folder for editing and Docker compilation;
+saved source, resources and revision history remain in Supabase.
 `Open project` continues to open any existing local LaTeX folder.
 
 The project explorer can create files and folders or copy selected files and
@@ -61,6 +62,12 @@ dragging, and renamed or deleted from the right-click menu.
 For the active `.tex` file, the resizable File outline panel tracks parts,
 chapters, sections, and nested subsections while you type. Selecting an entry
 jumps directly to its source line in the editor.
+
+After compiling, double-click a source line to scroll the PDF preview to its
+typeset position and highlight it. This also works while viewing a cloud project
+without Edit access. The mapping belongs to the displayed PDF, so a failed build
+keeps navigation paired with the last successful preview. Compile again after
+editing source to update the PDF and its positions.
 
 ## Development
 
@@ -88,28 +95,28 @@ npm run package
 
 Enable collaboration on any project with **Collaborate**. The project keeps one
 entry in **Projects**, including after restart or sign-out. Editing with others
-requires an account; ordinary project creation and editing do not.
+requires an account. Existing local folders can still be opened and edited
+without an account.
 
-Sign in using **Continue with GitHub** in your system browser. Install the GitHub
-App and choose the project repositories during onboarding. The app creates a
-private repository for the project owner, manages Git credentials and commit
-identity, and keeps the application session in the OS key store.
+Create an account with your email and password, confirm your email when prompted,
+then sign in. Password recovery also uses email. Electron main keeps account
+sessions in the OS key store when available. GitHub is not required for accounts,
+cloud project storage or collaboration.
 
 Only one person can Edit each file, while different files can be edited in
-parallel. Done saves locally, reserves a publication turn, commits and pushes to
-GitHub, then reports success only after the backend verifies the commit. SSE
-carries confirmed commit SHAs; desktops automatically update their project files.
+parallel. Done saves source and a complete revision in one database transaction,
+then releases the edit lease. SSE carries project IDs; desktops reload the
+authorized cloud snapshot and update their project files.
 Shared edits save directly into the project folder. Opening a shared project
-replaces outside local edits with the published GitHub version before Edit is
+replaces outside local edits with the saved Supabase version before Edit is
 available. Easy LaTeX recovery drafts stay separate. Compilation still runs on
 the user's machine.
 
-Configure the GitHub App and additive migration using
-[the collaboration guide](docs/COLLABORATION.md) and `.env.example`. Start the API
-with `npm run api:dev` and the desktop with `npm run dev`. Run `npm run github:test`
-for disposable PostgreSQL integration tests with mocked GitHub. Automated tests
-do not create real GitHub repositories. The guide includes the two-account live
-test checklist and explicit legacy account/project migration workflow.
+Configure the public API URL and Supabase email delivery using
+[the Supabase Cloud guide](docs/SUPABASE_CLOUD.vi.md), then start the desktop with
+`npm run dev`. Build the Edge backend with `npm run supabase:build`. The current
+cloud installation starts fresh; importing projects from the older GitHub
+backend is optional recovery work documented in [the legacy guide](docs/COLLABORATION.md).
 
 ## Architecture
 
@@ -127,8 +134,16 @@ Electron Main
   +-- FileManager / FileWatcher
   +-- CompileManager / DockerLatexCompiler
   +-- SyncTeXManager
-  +-- GitManager / GitCheckout
+  +-- AccountManager / CollaborationManager / ProjectEventStream
+  +-- GitManager (local project tools)
   +-- SettingsManager
+                 |
+                 | authenticated HTTPS / SSE
+                 v
+Supabase Edge Function
+  +-- Supabase Auth (email/password)
+  +-- PostgreSQL (projects, source, revisions, members, leases)
+  +-- Private Storage (binary resources)
 ```
 
 The renderer has no Node.js integration. It cannot import `fs`, spawn a process,
@@ -146,10 +161,13 @@ it starts.
 
 ```text
 apps/desktop/          Electron main, preload, and React renderer
+apps/api/              Cloud HTTP handlers, account integration and data rules
 packages/shared-types/ IPC and domain contracts shared across processes
 packages/latex/        LaTeX parsing, completion, root detection, diagnostics
+supabase/              Database migrations and Edge Function entrypoint
 docs/design/DESIGN.md  Authoritative desktop UI contract
 ```
 
-Project-specific metadata and generated files live below `.easy-latex/` inside
-the opened project. Source files are never copied into a database.
+Project-specific local metadata and generated files live below `.easy-latex/`
+inside the opened project. Local projects stay on disk; cloud projects also keep
+their complete saved source and revision history in Supabase.

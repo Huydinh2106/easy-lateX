@@ -10,7 +10,7 @@ import { ArtifactRegistry } from '../src/main/services/compiler/ArtifactRegistry
 const shared={id:'11111111-1111-4111-8111-111111111111',name:'Paper',role:'owner'};
 afterEach(()=>vi.restoreAllMocks());
 const account=()=>new AccountManager({},new SecureSessionStorage('/unused',{available:()=>false,encrypt:()=>Buffer.alloc(0),decrypt:()=>''}),()=>Promise.resolve());
-const authenticated=()=>{const auth=account();vi.spyOn(auth,'installation').mockResolvedValue();vi.spyOn(auth,'accessToken').mockResolvedValue('test-token');vi.spyOn(auth,'state').mockResolvedValue({configured:true,googleEnabled:false,recovery:false,account:{id:'alice',email:'alice@example.test',displayName:'Alice'}});return auth;};
+const authenticated=()=>{const auth=account();vi.spyOn(auth,'accessToken').mockResolvedValue('test-token');vi.spyOn(auth,'state').mockResolvedValue({configured:true,googleEnabled:false,recovery:false,account:{id:'alice',email:'alice@example.test',displayName:'Alice'}});return auth;};
 const json=(value:unknown)=>Promise.resolve(new Response(JSON.stringify(value),{status:200}));
 const setup=async()=>{const root=await realpath(await mkdtemp(path.join(os.tmpdir(),'easy-latex-share-current-')));const source=path.join(root,'Paper');await mkdir(source);await writeFile(path.join(source,'main.tex'),'Original');return {root,source};};
 describe('Enable collaboration on the open project',()=>{

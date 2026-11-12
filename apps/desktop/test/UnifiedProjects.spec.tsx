@@ -11,10 +11,10 @@ import { App } from '../src/renderer/App';
 const anonymous:AccountState={configured:true,googleEnabled:false,account:null,recovery:false};
 const signedIn:AccountState={...anonymous,account:{id:'alice',displayName:'Alice',email:'alice@example.test'}};
 const shared:SharedProject={id:'shared',name:'Team paper',role:'owner'};
-const auth={state:vi.fn(),github:vi.fn(),cancel:vi.fn(),signOut:vi.fn()};
+const auth={state:vi.fn(),signIn:vi.fn(),cancel:vi.fn(),signOut:vi.fn()};
 const api={links:vi.fn(),projects:vi.fn(),invitations:vi.fn(),shareCurrentProject:vi.fn(),create:vi.fn(),accept:vi.fn()};
 beforeEach(()=>{
-  workspace.projectResult=null;vi.resetAllMocks();auth.state.mockResolvedValue(anonymous);auth.github.mockResolvedValue(signedIn);auth.cancel.mockResolvedValue(undefined);
+  workspace.projectResult=null;vi.resetAllMocks();auth.state.mockResolvedValue(anonymous);auth.signIn.mockResolvedValue(signedIn);auth.cancel.mockResolvedValue(undefined);
   api.links.mockResolvedValue([]);api.projects.mockResolvedValue([]);api.invitations.mockResolvedValue([]);api.shareCurrentProject.mockResolvedValue(shared);api.create.mockResolvedValue(shared);
   workspace.openRecentProject.mockResolvedValue(true);workspace.save.mockResolvedValue(true);workspace.createProject.mockResolvedValue(true);workspace.showProjects.mockResolvedValue(undefined);
   Object.defineProperty(window,'desktop',{value:{auth,collaboration:api},configurable:true});
@@ -23,16 +23,25 @@ afterEach(cleanup);
 const start=async()=>{render(<App/>);await waitFor(()=>expect(screen.getByRole('button',{name:'Collaborate on Local paper'})).toBeEnabled());};
 const signIn=async()=>{
   const dialog=within(screen.getByRole('dialog',{name:'Sign in to collaborate'}));
-  fireEvent.click(dialog.getByRole('button',{name:'Continue with GitHub'}));
+  fireEvent.change(dialog.getByLabelText('Email'),{target:{value:'alice@example.test'}});
+  fireEvent.change(dialog.getByLabelText('Password'),{target:{value:'account-password'}});
+  fireEvent.click(dialog.getByRole('button',{name:'Sign in'}));
   await waitFor(()=>expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
 };
 describe('Unified projects and optional sign-in',()=>{
-  it('keeps local opening and creation available without authentication',async()=>{
+  it('keeps local opening available and creates new projects in the cloud after email sign-in',async()=>{
     await start();fireEvent.click(screen.getByRole('button',{name:/Local paper.*On this device$/}));
     expect(workspace.openRecentProject).toHaveBeenCalledWith('/local/paper');expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button',{name:'New project'}));fireEvent.change(screen.getByPlaceholderText('My research paper'),{target:{value:'Another local paper'}});
-    fireEvent.click(screen.getByRole('button',{name:'Create project'}));await waitFor(()=>expect(workspace.createProject).toHaveBeenCalledWith('Another local paper'));
-    expect(api.create).not.toHaveBeenCalled();expect(api.shareCurrentProject).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button',{name:'New project'}));fireEvent.change(screen.getByPlaceholderText('My research paper'),{target:{value:'Cloud paper'}});
+    expect(screen.getByText('Your project and files will be saved in the cloud.')).toBeInTheDocument();
+    expect(screen.queryByText('Save new projects to')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button',{name:'Create project'}));
+    expect(screen.getByRole('dialog',{name:'Sign in to collaborate'})).toBeInTheDocument();
+    expect(api.create).not.toHaveBeenCalled();expect(workspace.createProject).not.toHaveBeenCalled();
+    await signIn();await screen.findByRole('heading',{name:'Editing Team paper'});
+    expect(auth.signIn).toHaveBeenCalledWith({email:'alice@example.test',password:'account-password'});
+    expect(api.create).toHaveBeenCalledExactlyOnceWith({name:'Cloud paper'});
+    expect(workspace.createProject).not.toHaveBeenCalled();expect(api.shareCurrentProject).not.toHaveBeenCalled();
   });
   it('requests sign-in before sharing a local project and resumes the requested action afterward',async()=>{
     await start();await waitFor(()=>expect(auth.state).toHaveBeenCalled());
@@ -53,6 +62,15 @@ describe('Unified projects and optional sign-in',()=>{
     fireEvent.change(screen.getByRole('textbox',{name:'Search projects'}),{target:{value:'Team'}});
     expect(screen.queryByRole('button',{name:/Local paper.*On this device$/})).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button',{name:/Team paper.*Collaboration enabled$/}));await screen.findByRole('heading',{name:'Editing Team paper'});expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+  it('shows the account email and provides no legacy project migration action',async()=>{
+    auth.state.mockResolvedValue({...signedIn,account:{...signedIn.account!,githubLogin:'old-handle'}});
+    await start();fireEvent.click(screen.getByTitle('Account menu'));
+    const menu=within(screen.getByRole('menu',{name:'Account menu'}));
+    expect(menu.getByText('alice@example.test')).toBeInTheDocument();
+    expect(menu.queryByText('@old-handle')).not.toBeInTheDocument();
+    expect(menu.queryByRole('menuitem',{name:/Migrate/})).not.toBeInTheDocument();
+    expect(menu.getByRole('menuitem',{name:'Sign out'})).toBeInTheDocument();
   });
   it('keeps one project after enabling collaboration and reopening it',async()=>{
     auth.state.mockResolvedValue(signedIn);await start();

@@ -72,6 +72,7 @@ export function parseSyncTeXForward(value: unknown): SyncTeXForwardInput {
   if (!Number.isSafeInteger(input.line) || Number(input.line) < 1) throw new Error("SyncTeX line must be a positive integer");
   if (input.column !== undefined && (!Number.isSafeInteger(input.column) || Number(input.column) < 1)) throw new Error("SyncTeX column must be a positive integer");
   return {
+    ...(input.pdfUrl !== undefined ? { pdfUrl: parsePdfArtifact(input.pdfUrl) } : {}),
     file: assertString(input.file, "SyncTeX file"),
     line: Number(input.line),
     ...(input.column !== undefined ? { column: Number(input.column) } : {})
@@ -85,7 +86,13 @@ export function parseSyncTeXInverse(value: unknown): SyncTeXInverseInput {
     if (typeof input[key] !== "number" || !Number.isFinite(input[key])) throw new Error(`SyncTeX ${key} is invalid`);
   }
   if (Number(input.page) < 1) throw new Error("SyncTeX page must be positive");
-  return { page: Number(input.page), x: Number(input.x), y: Number(input.y) };
+  return { page: Number(input.page), x: Number(input.x), y: Number(input.y), ...(input.pdfUrl !== undefined ? { pdfUrl: parsePdfArtifact(input.pdfUrl) } : {}) };
+}
+
+function parsePdfArtifact(value: unknown): string {
+  const url = assertString(value, "PDF artifact", 256);
+  if (!/^easy-latex:\/\/pdf\/[a-f0-9-]{36}$/i.test(url)) throw new Error("PDF artifact is invalid");
+  return url;
 }
 
 const settingKeys = new Set<AppSettingKey>(["compilerEngine", "projectsDirectory", "explorerWidth", "pdfWidth", "problemsHeight", "recentProjects", "collaborationApiUrl"]);

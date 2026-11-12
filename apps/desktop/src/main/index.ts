@@ -81,8 +81,8 @@ async function bootstrap(): Promise<void> {
   const workspace = new WorkspaceManager(files, watcher, settings);
   const artifacts = new ArtifactRegistry();
   const compilerImage = process.env.EASY_LATEX_DOCKER_IMAGE?.trim() || DEFAULT_COMPILER_IMAGE;
-  compiler = new CompileManager(new DockerLatexCompiler(compilerImage), workspace, files, settings, artifacts);
-  const synctex = new SyncTeXManager();
+  const synctex = new SyncTeXManager(workspace, files);
+  compiler = new CompileManager(new DockerLatexCompiler(compilerImage), workspace, files, settings, artifacts, synctex);
   const git = new GitManager(files);
   const getWindow = (): BrowserWindow | null => mainWindow;
   const apiUrl=await settings.get('collaborationApiUrl') || process.env.EASY_LATEX_API_URL || await readReleaseApiUrl(process.resourcesPath);

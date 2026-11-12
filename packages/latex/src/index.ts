@@ -6,3 +6,8 @@ export { parseOutline } from "./parser/outline";
 export type { OutlineItem, OutlineKind } from "./parser/outline";
 export { findRootCandidates, isRootDocument } from "./parser/rootDocument";
 export type { LatexSourceFile } from "./parser/rootDocument";
+export { parseVisualDocument, parseDocumentDetails, parseInline, escapeLatex, replaceVisualRange } from './parser/visualDocument';
+export type { VisualDocument, VisualBlock, VisualBlockKind, InlineNode, DocumentDetail } from './parser/visualDocument';
+export { setVisualStyle, setVisualList, insertVisualParagraph, splitVisualBlock, mergeVisualBlocks } from './parser/visualEdits';
+export { parseSyncTeX, forwardSearch, inverseSearch } from "./synctex/synctexParser";
+export type { SyncTeXData, SyncTeXRecord, SyncTeXForwardResult, SyncTeXInverseResult } from "./synctex/synctexParser";

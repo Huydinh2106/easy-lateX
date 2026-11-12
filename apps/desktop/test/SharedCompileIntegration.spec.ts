@@ -2,7 +2,7 @@ import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { CollaborationManager } from '../src/main/services/collaboration/CollaborationManager';
 import { AccountManager } from '../src/main/services/account/AccountManager';
 import { SecureSessionStorage } from '../src/main/services/account/SecureSessionStorage';
@@ -14,11 +14,15 @@ describe.runIf(process.env.EASY_LATEX_COMPILER_INTEGRATION === '1')('Shared proj
     try {
       const storage=new SecureSessionStorage(path.join(directory,'session'),{available:()=>false,encrypt:()=>Buffer.alloc(0),decrypt:()=>''});
       const account=new AccountManager({},storage,()=>Promise.resolve());
+      vi.spyOn(account,'state').mockResolvedValue({configured:true,account:{id:randomUUID(),email:'writer@example.test',displayName:'Writer'},googleEnabled:false,recovery:false,sessionPersistence:'memory'});
       const artifacts=new ArtifactRegistry();
       const manager=new CollaborationManager(account,undefined,directory,artifacts);
       const id=randomUUID();
       const first=await manager.compile(id,[{path:'main.tex',content:'\\documentclass{article}\n\\begin{document}Reference figure.\\end{document}'}],'main.tex','pdflatex');
       expect(first.success,first.log.slice(-3000)).toBe(true);
+      const target=await manager.forwardSync(id,first.pdfUrl!,{file:'main.tex',line:2});
+      expect(target).toMatchObject({available:true,page:1});
+      expect(Number.isFinite(target.x)&&Number.isFinite(target.y)).toBe(true);
       const attachment=await readFile(artifacts.resolve(first.pdfUrl!)!);
       const files=[{path:'main.tex',content:'\\documentclass{article}\n\\usepackage{graphicx}\n\\begin{document}\\includegraphics[width=3cm]{figures/reference.pdf}\\end{document}'},{path:'figures/reference.pdf',content:attachment.toString('base64'),encoding:'base64' as const}];
       const second=await manager.compile(id,files,'main.tex','pdflatex');
@@ -28,6 +32,7 @@ describe.runIf(process.env.EASY_LATEX_COMPILER_INTEGRATION === '1')('Shared proj
       expect(bytes.subarray(0,4).toString()).toBe('%PDF');
       const failed=await manager.compile(id,[{path:'main.tex',content:'\\documentclass{article}\n\\usepackage{easy-latex-intentionally-missing}\n\\begin{document}Broken.\\end{document}'}],'main.tex','pdflatex');
       expect(failed.success).toBe(false);
+      expect(await manager.forwardSync(id,first.pdfUrl!,{file:'main.tex',line:2})).toEqual(target);
       expect(await readFile(preview)).toEqual(bytes);
       expect(await readdir(path.join(directory,'builds'))).toEqual([]);
     } finally {await rm(directory,{recursive:true,force:true});}

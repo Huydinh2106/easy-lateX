@@ -9,7 +9,8 @@ import { parseOutline } from "@easy-latex/latex";
 import { StatusBar } from "./components/StatusBar";
 import { CompileToolbar } from "./features/compile/CompileToolbar";
 import { ProjectDashboard } from "./features/dashboard/ProjectDashboard";
-import { LatexEditor, type LatexEditorHandle } from "./features/editor/LatexEditor";
+import type { LatexEditorHandle } from "./features/editor/LatexEditor";
+import { DocumentEditor } from "./features/editor/DocumentEditor";
 import { ProjectExplorer } from "./features/project/ProjectExplorer";
 import { useWorkspaceController } from "./hooks/useWorkspaceController";
 
@@ -101,7 +102,16 @@ export function App() {
         recentProjects={workspace.recentProjects}
         projectsDirectory={workspace.settings.projectsDirectory}
         error={workspace.error ?? collaboration.error}
-        onCreateProject={workspace.createProject}
+        onCreateProject={async name => {
+          let created=false;
+          const create=async()=>{
+            const project=await window.desktop.collaboration.create({name});
+            setInviteOnOpen(false);setSharedProject(project);
+            await collaboration.refresh();created=true;
+          };
+          if(!collaboration.account.account){collaboration.requireAccount(create);return false;}
+          await collaboration.run(create);return created;
+        }}
         onChooseProjectsDirectory={workspace.chooseProjectsDirectory}
         onOpenProject={workspace.openProject}
         onOpenRecent={openRecent}
@@ -116,6 +126,7 @@ export function App() {
   const project = workspace.projectResult.project;
   return <WorkspaceFrame settings={workspace.settings} onResize={workspace.resizePanel} pdfOpen={workspace.pdfOpen}
     pdfUrl={workspace.compileResult?.pdfUrl} pdfStale={workspace.pdfStale} onClosePdf={() => workspace.setPdfOpen(false)}
+    onInverseSync={(input) => void workspace.syncFromPdf(input)} pdfJumpTarget={workspace.pdfJumpTarget}
     problemsOpen={workspace.problemsOpen} diagnostics={workspace.diagnostics} log={workspace.compileResult?.log ?? ""}
     onToggleProblems={() => workspace.setProblemsOpen(!workspace.problemsOpen)} onSelectDiagnostic={diagnostic => void workspace.selectDiagnostic(diagnostic)}
     status={<StatusBar file={workspace.activeFile?.path} engine={workspace.settings.compilerEngine} git={workspace.git}/>}
@@ -158,7 +169,7 @@ export function App() {
     >
       <div className="editor-surface">
               {workspace.activeFile ? (
-                <LatexEditor
+                <DocumentEditor
                   ref={editorRef}
                   path={workspace.activeFile.path}
                   value={workspace.content}
@@ -166,6 +177,7 @@ export function App() {
                   onChange={workspace.changeContent}
                   onSave={() => void workspace.save()}
                   onCursorLineChange={setCursorLine}
+                  onSyncToPdf={(line) => void workspace.syncToPdf(line ?? cursorLine)}
                 />
               ) : (
                 <div className="editor-empty"><FileText /><strong>Select a text file</strong><span>Choose a LaTeX source from the project explorer.</span></div>

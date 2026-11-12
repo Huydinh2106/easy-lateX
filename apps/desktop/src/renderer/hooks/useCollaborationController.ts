@@ -34,8 +34,7 @@ export function useCollaborationController() {
       void Promise.all([window.desktop.collaboration.projects(), window.desktop.collaboration.invitations()]).then(([p, i]) => {if (live) {setProjects(p); setInvitations(i);}}).catch(e => {if (live) setError(errorMessage(e));}).finally(() => {loading = false;});
     };
     poll(); const timer = setInterval(poll, 10_000);
-    window.addEventListener("github-migration-completed",poll);
-    return () => {live = false; clearInterval(timer);window.removeEventListener("github-migration-completed",poll);};
+    return () => {live = false; clearInterval(timer);};
   }, [account.account?.id, account.recovery]);
   const run = async (action: () => Promise<void>) => {
     setBusy(true); setError(null);
