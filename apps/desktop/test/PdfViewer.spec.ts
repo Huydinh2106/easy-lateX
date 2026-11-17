@@ -15,6 +15,8 @@ let resize: ResizeObserverCallback;
 let destroy: ReturnType<typeof vi.fn>;
 let renders: { number: number; cancel: ReturnType<typeof vi.fn>; scale: number }[];
 let getPage: ReturnType<typeof vi.fn>;
+let holdRenders: boolean;
+let finishRenders: (() => void)[];
 
 function intersect(number: number, visible = true) {
   const observer = intersections.find(({ element }) => (element as HTMLElement).dataset.pageNumber === String(number));
@@ -30,9 +32,26 @@ async function flushUI(action: () => void) {
   });
 }
 
+function mockAnimationFrames() {
+  let nextId = 0;
+  const frames = new Map<number, FrameRequestCallback>();
+  vi.stubGlobal("requestAnimationFrame", vi.fn((callback: FrameRequestCallback) => {
+    frames.set(++nextId, callback);
+    return nextId;
+  }));
+  vi.stubGlobal("cancelAnimationFrame", vi.fn((id: number) => frames.delete(id)));
+  return () => {
+    const callbacks = [...frames.values()];
+    frames.clear();
+    callbacks.forEach((callback) => callback(0));
+  };
+}
+
 beforeEach(() => {
   intersections = [];
   renders = [];
+  holdRenders = false;
+  finishRenders = [];
   destroy = vi.fn().mockResolvedValue(undefined);
   getPage = vi.fn((number: number) => Promise.resolve({
     getViewport: ({ scale }: { scale: number }) => ({
@@ -49,7 +68,7 @@ beforeEach(() => {
     render: ({ viewport }: { viewport: { scale: number } }) => {
       const cancel = vi.fn();
       renders.push({ number, cancel, scale: viewport.scale });
-      return { promise: Promise.resolve(), cancel };
+      return { promise: holdRenders ? new Promise<void>((resolve) => finishRenders.push(resolve)) : Promise.resolve(), cancel };
     }
   }));
   pdf.getDocument.mockReset().mockReturnValue({ promise: Promise.resolve({ numPages: 3, getPage }), destroy });
@@ -65,7 +84,7 @@ beforeEach(() => {
     disconnect = vi.fn();
   });
 });
-afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe("continuous PDF preview", () => {
   it("lists every page but renders only nearby pages and releases offscreen canvases", async () => {
@@ -100,6 +119,146 @@ describe("continuous PDF preview", () => {
     fireEvent.click(screen.getByRole("button", { name: "Fit PDF to width" }));
     await waitFor(() => expect(renders.at(-1)?.scale).toBe(0.5));
     expect(screen.getByText("Out of date")).toBeTruthy();
+  });
+
+  it("batches pinch deltas per frame and keeps the canvas until the gesture settles", async () => {
+    const flushFrame = mockAnimationFrames();
+    const view = render(React.createElement(PdfViewer, { url: "artifact:first", stale: false, onClose: vi.fn() }));
+    const page = await screen.findByRole("img", { name: "Page 1" });
+    const viewport = screen.getByRole("region", { name: /PDF pages/ });
+    await flushUI(() => { intersect(1); resize([{ contentRect: { width: 632 } } as ResizeObserverEntry], {} as ResizeObserver); });
+    const canvas = view.container.querySelector("canvas");
+    const initialRenderCount = renders.length;
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const wheel = new WheelEvent("wheel", { ctrlKey: true, deltaY: -10, bubbles: true, cancelable: true });
+    fireEvent(viewport, wheel);
+    fireEvent.wheel(viewport, { ctrlKey: true, deltaY: -10 });
+    expect(wheel.defaultPrevented).toBe(true);
+    expect(requestAnimationFrame).toHaveBeenCalledOnce();
+    expect(page.style.width).toBe("600px");
+    await flushUI(flushFrame);
+    expect(Number.parseFloat(page.style.width)).toBeCloseTo(600 * Math.exp(0.2));
+    expect(view.container.querySelector("canvas")).toBe(canvas);
+    expect(renders).toHaveLength(initialRenderCount);
+    await flushUI(() => vi.advanceTimersByTime(149));
+    expect(renders).toHaveLength(initialRenderCount);
+    await flushUI(() => vi.advanceTimersByTime(1));
+    expect(renders).toHaveLength(initialRenderCount + 1);
+    expect(renders.at(-1)?.scale).toBeCloseTo(Math.exp(0.2));
+    expect(view.container.querySelector("canvas")).not.toBe(canvas);
+    expect(canvas?.width).toBe(0);
+    // A panel resize must preserve the explicit zoom chosen by the gesture.
+    await flushUI(() => resize([{ contentRect: { width: 332 } } as ResizeObserverEntry], {} as ResizeObserver));
+    expect(Number.parseFloat(page.style.width)).toBeCloseTo(600 * Math.exp(0.2));
+  });
+
+  it("anchors pinch zoom to the pointer on both axes without repeating a source jump", async () => {
+    const flushFrame = mockAnimationFrames();
+    const view = render(React.createElement(PdfViewer, { url: "artifact:first", stale: false, onClose: vi.fn() }));
+    const page2 = await screen.findByRole("img", { name: "Page 2" });
+    const viewport = screen.getByRole("region", { name: /PDF pages/ });
+    await flushUI(() => resize([{ contentRect: { width: 632 } } as ResizeObserverEntry], {} as ResizeObserver));
+    vi.spyOn(viewport, "getBoundingClientRect").mockReturnValue({ top: 100, left: 100, width: 400, height: 500 } as DOMRect);
+    screen.getAllByRole<HTMLElement>("img").forEach((frame, index) => {
+      vi.spyOn(frame, "getBoundingClientRect").mockImplementation(() => {
+        const width = Number.parseFloat(frame.style.width);
+        const height = width * 800 / 600;
+        const top = 100 + 16 + index * (height + 16) - viewport.scrollTop;
+        const left = 100 + Math.max(16, (400 - width) / 2) - viewport.scrollLeft;
+        return { top, left, width, height, bottom: top + height } as DOMRect;
+      });
+    });
+    const scrollTo = vi.fn();
+    viewport.scrollTo = scrollTo;
+    view.rerender(React.createElement(PdfViewer, { url: "artifact:first", stale: false, onClose: vi.fn(),
+      jumpTarget: { page: 2, x: 200, y: 300, nonce: 1 } }));
+    scrollTo.mockClear();
+    viewport.scrollTop = 1000;
+    viewport.scrollLeft = 70;
+    const before = page2.getBoundingClientRect();
+    const x = (260 - before.left) / before.width;
+    const y = (300 - before.top) / before.height;
+    fireEvent.wheel(viewport, { ctrlKey: true, deltaY: -20, clientX: 260, clientY: 300 });
+    await flushUI(flushFrame);
+    const after = page2.getBoundingClientRect();
+    expect(after.left + after.width * x).toBeCloseTo(260);
+    expect(after.top + after.height * y).toBeCloseTo(300);
+    expect(scrollTo).not.toHaveBeenCalled();
+    fireEvent.wheel(viewport, { ctrlKey: true, deltaY: 20, clientX: 260, clientY: 300 });
+    await flushUI(flushFrame);
+    expect(page2.getBoundingClientRect().left + 600 * x).toBeCloseTo(260);
+    expect(page2.getBoundingClientRect().top + 800 * y).toBeCloseTo(300);
+    expect(viewport.scrollTop).toBeCloseTo(1000);
+    expect(viewport.scrollLeft).toBeCloseTo(70);
+  });
+
+  it("keeps the last complete canvas visible while rendering and ignores canceled render completions", async () => {
+    const view = render(React.createElement(PdfViewer, { url: "artifact:first", stale: false, onClose: vi.fn() }));
+    await screen.findByRole("img", { name: "Page 1" });
+    await flushUI(() => intersect(1));
+    const canvas = view.container.querySelector("canvas");
+    expect(canvas).not.toBeNull();
+    holdRenders = true;
+    fireEvent.click(screen.getByRole("button", { name: "Zoom in" }));
+    fireEvent.click(screen.getByRole("button", { name: "Zoom in" }));
+    expect(renders.at(-2)?.cancel).toHaveBeenCalledOnce();
+    expect(view.container.querySelector("canvas")).toBe(canvas);
+    await flushUI(() => finishRenders[0]?.());
+    expect(view.container.querySelector("canvas")).toBe(canvas);
+    await flushUI(() => finishRenders[1]?.());
+    expect(view.container.querySelector("canvas")).not.toBe(canvas);
+    expect(view.container.querySelectorAll("canvas")).toHaveLength(1);
+    expect(canvas?.width).toBe(0);
+  });
+
+  it("leaves ordinary trackpad scrolling native and limits Ctrl+wheel zoom", async () => {
+    const flushFrame = mockAnimationFrames();
+    render(React.createElement(PdfViewer, { url: "artifact:first", stale: false, onClose: vi.fn() }));
+    const page = await screen.findByRole("img", { name: "Page 1" });
+    const viewport = screen.getByRole("region", { name: /PDF pages/ });
+    const scroll = new WheelEvent("wheel", { deltaX: 12, deltaY: 24, bubbles: true, cancelable: true });
+    fireEvent(viewport, scroll);
+    expect(scroll.defaultPrevented).toBe(false);
+    expect(requestAnimationFrame).not.toHaveBeenCalled();
+    fireEvent.wheel(viewport, { ctrlKey: true, deltaY: -10000 });
+    await flushUI(flushFrame);
+    expect(page.style.width).toBe("1800px");
+    fireEvent.wheel(viewport, { ctrlKey: true, deltaY: 10000 });
+    await flushUI(flushFrame);
+    expect(page.style.width).toBe("150px");
+    fireEvent.click(screen.getByRole("button", { name: "Fit PDF to width" }));
+    expect(screen.getByRole("button", { name: "Fit PDF to width" }).getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it.each([{ deltaMode: 0, deltaY: -16 }, { deltaMode: 1, deltaY: -1 }, { deltaMode: 2, deltaY: -0.032 }])(
+    "normalizes wheel units for zoom ($deltaMode)", async ({ deltaMode, deltaY }) => {
+      const flushFrame = mockAnimationFrames();
+      render(React.createElement(PdfViewer, { url: "artifact:first", stale: false, onClose: vi.fn() }));
+      const page = await screen.findByRole("img", { name: "Page 1" });
+      const viewport = screen.getByRole("region", { name: /PDF pages/ });
+      Object.defineProperty(viewport, "clientHeight", { value: 500 });
+      await flushUI(() => resize([{ contentRect: { width: 632 } } as ResizeObserverEntry], {} as ResizeObserver));
+      fireEvent.wheel(viewport, { ctrlKey: true, deltaMode, deltaY });
+      await flushUI(flushFrame);
+      expect(Number.parseFloat(page.style.width)).toBeCloseTo(600 * Math.exp(0.16));
+    }
+  );
+
+  it("cancels pending pinch frames and timers when replacing the document or unmounting", async () => {
+    const flushFrame = mockAnimationFrames();
+    const view = render(React.createElement(PdfViewer, { url: "artifact:first", stale: false, onClose: vi.fn() }));
+    await screen.findByRole("img", { name: "Page 1" });
+    const viewport = screen.getByRole("region", { name: /PDF pages/ });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    fireEvent.wheel(viewport, { ctrlKey: true, deltaY: -20 });
+    view.rerender(React.createElement(PdfViewer, { url: "artifact:second", stale: false, onClose: vi.fn() }));
+    expect(cancelAnimationFrame).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
+    await flushUI(flushFrame);
+    fireEvent.wheel(viewport, { ctrlKey: true, deltaY: -20 });
+    view.unmount();
+    expect(cancelAnimationFrame).toHaveBeenCalledTimes(2);
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("tracks the reading page while scrolling and offers validated direct navigation", async () => {

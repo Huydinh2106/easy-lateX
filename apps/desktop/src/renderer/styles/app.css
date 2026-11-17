@@ -1168,7 +1168,7 @@ body:has(.panel-resizer-horizontal[data-dragging="true"]) { cursor: row-resize; 
 .pdf-pages { display: flex; width: max-content; min-width: 100%; flex-direction: column; align-items: center; gap: var(--space-4); padding: var(--space-4); }
 .pdf-page { position: relative; flex: 0 0 auto; overflow: hidden; background: var(--color-bg-surface); box-shadow: var(--shadow-whisper); scroll-margin-top: var(--space-4); cursor: default; }
 .pdf-page.is-hovering-jumpable { cursor: pointer; }
-.pdf-page canvas { display: block; width: 100%; height: 100%; }
+.pdf-page-canvas, .pdf-page canvas { display: block; width: 100%; height: 100%; }
 .pdf-hover-highlight { position: absolute; background: rgba(254, 240, 138, 0.45); border-radius: 3px; box-shadow: 0 0 0 1px rgba(234, 179, 8, 0.35); pointer-events: none; z-index: 5; transition: opacity var(--duration-fast) var(--ease-standard); }
 .pdf-synctex-line-highlight { position: absolute; left: 0; right: 0; height: 24px; background: rgba(254, 240, 138, 0.55); border-top: 1px solid rgba(234, 179, 8, 0.6); border-bottom: 1px solid rgba(234, 179, 8, 0.6); pointer-events: none; z-index: 9; animation: synctex-line-pulse 2.2s ease-out forwards; }
 @keyframes synctex-line-pulse {

@@ -20,13 +20,14 @@ interface PdfViewerProps {
   jumpTarget?: PdfViewerJumpTarget | null | undefined;
 }
 
-// A fresh canvas for each scale prevents a cancelled render from sharing its
-// canvas with the next render during zoom or panel resizing.
+// Render offscreen, then swap canvases only once the new image is ready. The
+// previous image stays visible (and scales with the page) while zooming.
 function PageCanvas({ page, scale, onError }: { page: PDFPageProxy; scale: number; onError(message: string): void }) {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
+    const container = containerRef.current;
+    if (!container) return;
+    const canvas = window.document.createElement("canvas");
     const context = canvas.getContext("2d");
     if (!context) return;
     const viewport = page.getViewport({ scale });
@@ -37,7 +38,12 @@ function PageCanvas({ page, scale, onError }: { page: PDFPageProxy; scale: numbe
     let task: RenderTask | undefined;
     try {
       task = page.render({ canvas, canvasContext: context, viewport, transform: ratio === 1 ? undefined : [ratio, 0, 0, ratio, 0, 0] });
-      void task.promise.catch((caught: unknown) => {
+      void task.promise.then(() => {
+        if (disposed) return;
+        const previous = container.querySelector("canvas");
+        container.replaceChildren(canvas);
+        if (previous) { previous.width = 0; previous.height = 0; }
+      }).catch((caught: unknown) => {
         if (!disposed && !(caught instanceof Error && caught.name === "RenderingCancelledException")) {
           onError(caught instanceof Error ? caught.message : "Could not render this page");
         }
@@ -48,11 +54,17 @@ function PageCanvas({ page, scale, onError }: { page: PDFPageProxy; scale: numbe
     return () => {
       disposed = true;
       task?.cancel();
-      canvas.width = 0;
-      canvas.height = 0;
+      if (!container.contains(canvas)) { canvas.width = 0; canvas.height = 0; }
     };
   }, [page, scale, onError]);
-  return <canvas ref={canvasRef} aria-hidden="true" />;
+  useEffect(() => {
+    const container = containerRef.current;
+    return () => {
+      const canvas = container?.querySelector("canvas");
+      if (canvas) { canvas.width = 0; canvas.height = 0; }
+    };
+  }, []);
+  return <div ref={containerRef} className="pdf-page-canvas" aria-hidden="true" />;
 }
 
 interface RegionBox {
@@ -123,6 +135,7 @@ function PdfPage({
   document,
   number,
   scale,
+  renderScale,
   estimatedSize,
   viewportRef,
   onPageClick,
@@ -131,6 +144,7 @@ function PdfPage({
   document: PDFDocumentProxy;
   number: number;
   scale: number;
+  renderScale: number;
   estimatedSize: { width: number; height: number };
   viewportRef: RefObject<HTMLDivElement | null>;
   onPageClick?(event: React.MouseEvent<HTMLDivElement>, pageNumber: number): void;
@@ -216,7 +230,7 @@ function PdfPage({
         onPageClick?.(event, number);
       }}
     >
-      {nearby && page && !error ? <PageCanvas key={scale} page={page} scale={scale} onError={setError} /> : null}
+      {nearby && page && !error ? <PageCanvas page={page} scale={renderScale} onError={setError} /> : null}
       {hoverRegion ? (
         <div
           className="pdf-hover-highlight"
@@ -256,18 +270,24 @@ export function PdfViewer({ url, stale, onClose, onInverseSync, jumpTarget }: Pd
   const viewportRef = useRef<HTMLDivElement>(null);
   const cancelPageEdit = useRef(false);
   const scrollAnchor = useRef<{ number: number; fraction: number } | null>(null);
+  const zoomAnchor = useRef<{ number: number; x: number; y: number; clientX: number; clientY: number } | null>(null);
+  const cancelPinch = useRef<() => void>(() => {});
   const [loaded, setLoaded] = useState<{ url: string; document: PDFDocumentProxy; size: { width: number; height: number } } | null>(null);
   const [page, setPage] = useState(1);
   const [pageDraft, setPageDraft] = useState("");
   const [editingPage, setEditingPage] = useState(false);
   const [width, setWidth] = useState(480);
   const [manualScale, setManualScale] = useState<number | null>(null);
+  const [pinchRenderScale, setPinchRenderScale] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [highlight, setHighlight] = useState<{ page: number; x: number; y: number } | null>(null);
   const document = loaded && loaded.url === url ? loaded.document : null;
   const size = loaded?.size ?? { width: 595, height: 842 };
   const fitScale = Math.max(0.1, (width - 32) / size.width);
   const scale = manualScale ?? fitScale;
+  const scaleRef = useRef(scale);
+
+  useLayoutEffect(() => { scaleRef.current = scale; }, [scale]);
 
   const rememberPosition = () => {
     const viewport = viewportRef.current;
@@ -284,6 +304,17 @@ export function PdfViewer({ url, stale, onClose, onInverseSync, jumpTarget }: Pd
 
   useLayoutEffect(() => {
     const viewport = viewportRef.current;
+    const pointer = zoomAnchor.current;
+    zoomAnchor.current = null;
+    const pointedPage = pointer && viewport?.querySelector(`[data-page-number="${pointer.number}"]`);
+    if (viewport && pointer && pointedPage) {
+      const bounds = pointedPage.getBoundingClientRect();
+      const viewportBounds = viewport.getBoundingClientRect();
+      viewport.scrollLeft += bounds.left + bounds.width * pointer.x - viewportBounds.left - pointer.clientX;
+      viewport.scrollTop += bounds.top + bounds.height * pointer.y - viewportBounds.top - pointer.clientY;
+      scrollAnchor.current = null;
+      return;
+    }
     const anchor = scrollAnchor.current;
     const frame = anchor && viewport?.querySelector(`[data-page-number="${anchor.number}"]`);
     if (viewport && anchor && frame) {
@@ -291,6 +322,70 @@ export function PdfViewer({ url, stale, onClose, onInverseSync, jumpTarget }: Pd
       viewport.scrollTop += bounds.top - viewport.getBoundingClientRect().top + bounds.height * anchor.fraction;
     }
   }, [scale, document]);
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport || !document) return;
+    let frame: number | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let pendingScale: number | null = null;
+    let clientX = 0;
+    let clientY = 0;
+    const cancel = () => {
+      if (frame !== undefined) cancelAnimationFrame(frame);
+      clearTimeout(timer);
+      frame = undefined;
+      pendingScale = null;
+      zoomAnchor.current = null;
+      setPinchRenderScale(null);
+    };
+    cancelPinch.current = cancel;
+    const onWheel = (event: WheelEvent) => {
+      // Chromium exposes trackpad pinch gestures as Ctrl+wheel. Leave ordinary
+      // two-finger scrolling, including horizontal scrolling, to the viewport.
+      if (!event.ctrlKey) return;
+      event.preventDefault();
+      const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? viewport.clientHeight : 1;
+      const next = Math.min(3, Math.max(0.25, (pendingScale ?? scaleRef.current) * Math.exp(-event.deltaY * unit * 0.01)));
+      if (!Number.isFinite(next) || next === (pendingScale ?? scaleRef.current)) return;
+      pendingScale = next;
+      clientX = event.clientX;
+      clientY = event.clientY;
+      if (frame === undefined) {
+        frame = requestAnimationFrame(() => {
+          frame = undefined;
+          const nextScale = pendingScale;
+          pendingScale = null;
+          if (nextScale === null || nextScale === scaleRef.current) return;
+          const viewportBounds = viewport.getBoundingClientRect();
+          const pages = Array.from(viewport.querySelectorAll<HTMLElement>("[data-page-number]"));
+          const pointedPage = pages.find((page) => page.getBoundingClientRect().bottom >= clientY) ?? pages.at(-1);
+          if (pointedPage) {
+            const bounds = pointedPage.getBoundingClientRect();
+            if (bounds.width > 0 && bounds.height > 0) {
+              zoomAnchor.current = {
+                number: Number(pointedPage.dataset.pageNumber),
+                x: (clientX - bounds.left) / bounds.width,
+                y: (clientY - bounds.top) / bounds.height,
+                clientX: clientX - viewportBounds.left,
+                clientY: clientY - viewportBounds.top
+              };
+            }
+          }
+          setPinchRenderScale((previous) => previous ?? scaleRef.current);
+          setManualScale(nextScale);
+        });
+      }
+      clearTimeout(timer);
+      timer = setTimeout(() => setPinchRenderScale(null), 150);
+    };
+    viewport.addEventListener("wheel", onWheel, { passive: false });
+    return () => {
+      viewport.removeEventListener("wheel", onWheel);
+      cancel();
+      cancelPinch.current = () => {};
+    };
+  }, [document]);
 
   useEffect(() => {
     const viewport = viewportRef.current;
@@ -328,8 +423,8 @@ export function PdfViewer({ url, stale, onClose, onInverseSync, jumpTarget }: Pd
     if (frame) {
       const bounds = frame.getBoundingClientRect();
       const viewportBounds = viewport.getBoundingClientRect();
-      const top = Math.max(0, viewport.scrollTop + bounds.top - viewportBounds.top + jumpTarget.y * scale - viewport.clientHeight / 2);
-      const left = Math.max(0, viewport.scrollLeft + bounds.left - viewportBounds.left + jumpTarget.x * scale - viewport.clientWidth / 2);
+      const top = Math.max(0, viewport.scrollTop + bounds.top - viewportBounds.top + jumpTarget.y * scaleRef.current - viewport.clientHeight / 2);
+      const left = Math.max(0, viewport.scrollLeft + bounds.left - viewportBounds.left + jumpTarget.x * scaleRef.current - viewport.clientWidth / 2);
       if (typeof viewport.scrollTo === "function") {
         viewport.scrollTo({ top, left, behavior: "smooth" });
       } else {
@@ -341,7 +436,7 @@ export function PdfViewer({ url, stale, onClose, onInverseSync, jumpTarget }: Pd
     setHighlight({ page: jumpTarget.page, x: jumpTarget.x, y: jumpTarget.y });
     const timer = setTimeout(() => setHighlight(null), 2500);
     return () => clearTimeout(timer);
-  }, [jumpTarget, scale, document]);
+  }, [jumpTarget, document]);
 
   const updateCurrentPage = () => {
     rememberPosition();
@@ -394,10 +489,10 @@ export function PdfViewer({ url, stale, onClose, onInverseSync, jumpTarget }: Pd
               }} />
             <span>/ {document.numPages}</span>
           </div> : <span>—</span>}
-          <button type="button" disabled={!document} onClick={() => { rememberPosition(); setManualScale(Math.max(0.25, scale - 0.1)); }} aria-label="Zoom out" title="Zoom out"><Minus /></button>
-          <span className="pdf-zoom-value">{Math.round(scale * 100)}%</span>
-          <button type="button" disabled={!document} onClick={() => { rememberPosition(); setManualScale(Math.min(3, scale + 0.1)); }} aria-label="Zoom in" title="Zoom in"><Plus /></button>
-          <button type="button" disabled={!document} onClick={() => { rememberPosition(); setManualScale(null); }} aria-label="Fit PDF to width" aria-pressed={manualScale === null} title="Fit to width"><Maximize2 /></button>
+          <button type="button" disabled={!document} onClick={() => { cancelPinch.current(); rememberPosition(); setManualScale(Math.max(0.25, scale - 0.1)); }} aria-label="Zoom out" title="Zoom out"><Minus /></button>
+          <span className="pdf-zoom-value" title="Pinch on the trackpad or Ctrl+scroll to zoom">{Math.round(scale * 100)}%</span>
+          <button type="button" disabled={!document} onClick={() => { cancelPinch.current(); rememberPosition(); setManualScale(Math.min(3, scale + 0.1)); }} aria-label="Zoom in" title="Zoom in"><Plus /></button>
+          <button type="button" disabled={!document} onClick={() => { cancelPinch.current(); rememberPosition(); setManualScale(null); }} aria-label="Fit PDF to width" aria-pressed={manualScale === null} title="Fit to width"><Maximize2 /></button>
           <button type="button" onClick={onClose} aria-label="Close PDF preview" title="Close PDF preview"><X /></button>
         </div>
       </header>
@@ -412,6 +507,7 @@ export function PdfViewer({ url, stale, onClose, onInverseSync, jumpTarget }: Pd
               document={document}
               number={index + 1}
               scale={scale}
+              renderScale={pinchRenderScale ?? scale}
               estimatedSize={size}
               viewportRef={viewportRef}
               onPageClick={handlePageClick}
